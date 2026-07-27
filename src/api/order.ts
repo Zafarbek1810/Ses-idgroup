@@ -69,12 +69,20 @@ export type OrderItemLaboratory = {
 
 export type OrderItem = {
   id: number;
+  analysis_id?: number;
+  analysisId?: number;
   analysis: OrderItemAnalysis | null;
   laboratory: OrderItemLaboratory | null;
   status: OrderItemStatus | string;
   updatedAt?: string;
   createdAt?: string;
 };
+
+export function resolveOrderItemAnalysisId(item: OrderItem): number | null {
+  const raw = item.analysis?.id ?? item.analysis_id ?? item.analysisId;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 export type Order = {
   id: number;

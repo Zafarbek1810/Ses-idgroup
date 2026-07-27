@@ -1,18 +1,22 @@
 import * as React from "react";
 import { useState } from "react";
-import { Shield, Users, FlaskConical, TestTube2 } from "lucide-react";
+import { Shield, Users, FlaskConical, TestTube2, LayoutTemplate, FileType } from "lucide-react";
 import { RolesSection } from "./management/RolesSection";
 import { UsersSection } from "./management/UsersSection";
 import { LaboratoriesSection } from "./management/LaboratoriesSection";
 import { AnalysesSection } from "./management/AnalysesSection";
+import { PatternsSection } from "./management/PatternsSection";
+import { PdfTemplateSection } from "./management/PdfTemplateSection";
 
-type TabId = "roles" | "users" | "laboratories" | "analyses";
+type TabId = "roles" | "users" | "laboratories" | "analyses" | "patterns" | "pdf";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "roles", label: "Rollar", icon: Shield },
   { id: "users", label: "Foydalanuvchilar", icon: Users },
   { id: "laboratories", label: "Laboratoriyalar", icon: FlaskConical },
   { id: "analyses", label: "Analizlar", icon: TestTube2 },
+  { id: "patterns", label: "Analiz shablonlari", icon: LayoutTemplate },
+  { id: "pdf", label: "PDF shablon", icon: FileType },
 ];
 
 export function ManagementPage({ primaryColor }: { primaryColor: string }) {
@@ -51,6 +55,8 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
       {activeTab === "users" && <UsersSection primaryColor={primaryColor} />}
       {activeTab === "laboratories" && <LaboratoriesSection primaryColor={primaryColor} />}
       {activeTab === "analyses" && <AnalysesSection primaryColor={primaryColor} />}
+      {activeTab === "patterns" && <PatternsSection primaryColor={primaryColor} />}
+      {activeTab === "pdf" && <PdfTemplateSection primaryColor={primaryColor} />}
     </main>
   );
 }

@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import {
   LayoutDashboard, Users, Settings as SettingsIcon, Settings, ChevronLeft, ChevronDown, Shield,
   Sun, Moon, Monitor, Globe, LogOut, User, Edit3, X, Check,
-  Bell, HelpCircle, UserPlus, Wallet, ClipboardList,
+  Bell, HelpCircle, UserPlus, Wallet, ClipboardList, FileBarChart2,
 } from "lucide-react";
 import {
   clearSession,
@@ -19,7 +19,23 @@ import {
   PatientsPage,
   OrderPage,
   OrdersPage,
+  ResultsPage,
 } from "@/Pages";
+
+// ─── Persistence ──────────────────────────────────────────────────────────────
+
+const PRIMARY_COLOR_KEY = "ses-primary-color";
+const DEFAULT_PRIMARY_COLOR = "#0EA5E9";
+
+function getStoredPrimaryColor(): string {
+  try {
+    const stored = localStorage.getItem(PRIMARY_COLOR_KEY);
+    if (stored && /^#[0-9A-Fa-f]{6}$/.test(stored)) return stored;
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_PRIMARY_COLOR;
+}
 
 // ─── Data ────────────────────────────────────────────────────────────────────
 
@@ -29,6 +45,7 @@ const NAV_ITEMS = [
   { id: "patients", label: "Bemorlar", icon: UserPlus, section: "main" },
   { id: "kassa", label: "Kassa", icon: Wallet, section: "main" },
   { id: "orders", label: "Buyurtmalar", icon: ClipboardList, section: "main" },
+  { id: "results", label: "Natijalar", icon: FileBarChart2, section: "main" },
   // { id: "employees", label: "Employees", icon: Users, section: "main" },
 ];
 
@@ -552,7 +569,7 @@ const SettingsModal = ({ isOpen, onClose, primaryColor, onColorChange, darkMode,
         {/* Footer */}
         <div className="flex gap-3 px-6 pb-6">
           <button
-            onClick={() => { setLocalColor("#0EA5E9"); onColorChange("#0EA5E9"); }}
+            onClick={() => { setLocalColor(DEFAULT_PRIMARY_COLOR); onColorChange(DEFAULT_PRIMARY_COLOR); }}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
           >
             Reset Default
@@ -625,6 +642,8 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
           />
         ) : activeNav === "orders" ? (
           <OrdersPage primaryColor={primaryColor} />
+        ) : activeNav === "results" ? (
+          <ResultsPage primaryColor={primaryColor} />
         ) : activeNav === "patients" ? (
           <PatientsPage primaryColor={primaryColor} onGoToOrder={handleGoToOrder} />
         ) : activeNav === "employees" ? (
@@ -646,7 +665,7 @@ export default function App() {
     isAuthenticated() ? "dashboard" : "login",
   );
   const [user, setUser] = useState<AuthUser | null>(() => getStoredUser());
-  const [primaryColor, setPrimaryColor] = useState("#0EA5E9");
+  const [primaryColor, setPrimaryColor] = useState(getStoredPrimaryColor);
   const [darkMode, setDarkMode] = useState<"light" | "dark" | "system">("light");
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -656,11 +675,16 @@ export default function App() {
     return typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches;
   }, [darkMode]);
 
-  // Sync primary color CSS var
+  // Sync primary color CSS var + persist
   useEffect(() => {
     document.documentElement.style.setProperty("--primary", primaryColor);
     document.documentElement.style.setProperty("--primary-foreground", "#ffffff");
     document.documentElement.style.setProperty("--ring", primaryColor);
+    try {
+      localStorage.setItem(PRIMARY_COLOR_KEY, primaryColor);
+    } catch {
+      /* ignore */
+    }
   }, [primaryColor]);
 
   // Sync dark mode class

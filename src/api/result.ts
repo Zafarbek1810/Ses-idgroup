@@ -3,6 +3,8 @@ import { apiRequest } from "./client";
 /** One measured row inside a result (matches backend `result_item[]`) */
 export type ResultItemPayload = {
   analysis_id: number;
+  analysisId?: number;
+  analysis?: { id?: number } | null;
   name: string;
   have_or_not: boolean | null;
   unit: string | null;
@@ -13,6 +15,7 @@ export type ResultItemPayload = {
   have_or_notValue: boolean | null;
   unitValue: string | null;
   normValue: string | null;
+  norm_value?: string | null;
   minValue: number | null;
   maxValue: number | null;
   standardValue: string | null;
@@ -31,6 +34,7 @@ export type ResultRecord = {
   lab_director_id?: number;
   labDirectorId?: number;
   result_item?: ResultItemPayload[];
+  result_items?: ResultItemPayload[];
   resultItems?: ResultItemPayload[];
   items?: ResultItemPayload[];
   order?: {
@@ -66,19 +70,84 @@ export function resolveResultOrderId(
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-export function getResultItems(r: ResultRecord): ResultItemPayload[] {
-  const list = r.result_item ?? r.resultItems ?? r.items;
+export function resolveResultItemAnalysisId(
+  item: Pick<ResultItemPayload, "analysis_id" | "analysisId" | "analysis"> &
+    Record<string, unknown>,
+): number | null {
+  const raw = item.analysis_id ?? item.analysisId ?? item.analysis?.id;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export function getResultItemNormValue(
+  item: Pick<ResultItemPayload, "normValue" | "norm_value"> & Record<string, unknown>,
+): string {
+  const raw = item.normValue ?? item.norm_value ?? "";
+  return String(raw ?? "").trim();
+}
+
+export function getResultItems(r: ResultRecord | null | undefined): ResultItemPayload[] {
+  if (!r) return [];
+  const list =
+    r.result_item ??
+    r.result_items ??
+    r.resultItems ??
+    r.items ??
+    (r as { ResultItems?: ResultItemPayload[] }).ResultItems;
   return Array.isArray(list) ? list : [];
 }
 
+function normalizeResultRecord(raw: unknown): ResultRecord | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  let rec = raw as ResultRecord;
+
+  const inner = obj.data ?? obj.result ?? obj.item;
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const nested = inner as ResultRecord;
+    const nestedItems = getResultItems(nested);
+    const outerItems = getResultItems(rec);
+    // Prefer nested entity when it has id/items (common { data: record } envelope)
+    if (nested.id != null || (nestedItems.length > 0 && outerItems.length === 0)) {
+      rec = nested;
+    }
+  }
+
+  const items = getResultItems(rec);
+  const orderId = resolveResultOrderId(rec);
+  const id = Number(rec.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    // Still return a usable shell if items exist (add/update sometimes omit id shape)
+    if (items.length === 0) return null;
+  }
+
+  return {
+    ...rec,
+    ...(Number.isFinite(id) && id > 0 ? { id } : {}),
+    ...(orderId != null ? { order_id: orderId } : {}),
+    result_item: items.map(item => {
+      const analysisId = resolveResultItemAnalysisId(item);
+      const normValue = getResultItemNormValue(item) || item.normValue || null;
+      return {
+        ...item,
+        ...(analysisId != null ? { analysis_id: analysisId } : {}),
+        normValue,
+      };
+    }),
+  };
+}
+
 function normalizeList(raw: unknown): ResultRecord[] {
-  if (Array.isArray(raw)) return raw as ResultRecord[];
-  if (raw && typeof raw === "object") {
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) list = raw;
+  else if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
     const data = obj.data ?? obj.results ?? obj.items ?? obj.result;
-    if (Array.isArray(data)) return data as ResultRecord[];
+    if (Array.isArray(data)) list = data;
   }
-  return [];
+  return list
+    .map(normalizeResultRecord)
+    .filter((r): r is ResultRecord => r != null && Number.isFinite(Number(r.id)));
 }
 
 export async function getAllResults() {
@@ -89,11 +158,16 @@ export async function getAllResults() {
   return normalizeList(raw);
 }
 
-export function getResultById(id: number) {
-  return apiRequest<ResultRecord>(`/result/getby/${id}`, {
+export async function getResultById(id: number) {
+  const raw = await apiRequest<unknown>(`/result/getby/${id}`, {
     method: "GET",
     fallbackError: "Natijani yuklab bo'lmadi",
   });
+  const normalized = normalizeResultRecord(raw);
+  if (!normalized) {
+    throw new Error("Natijani yuklab bo'lmadi");
+  }
+  return normalized;
 }
 
 export function deleteResult(id: number) {
@@ -126,7 +200,7 @@ export function encodeSeverityToNormValue(sev: SeverityValues): string | null {
 }
 
 export function decodeSeverityFromItem(item: ResultItemPayload): SeverityValues {
-  const raw = item.normValue?.trim() || "";
+  const raw = getResultItemNormValue(item);
   if (raw.startsWith(SEV_PREFIX)) {
     try {
       const parsed = JSON.parse(raw.slice(SEV_PREFIX.length)) as Partial<SeverityValues>;
@@ -148,16 +222,25 @@ export function encodeGridFill(values: Record<string, string>): string {
   return `${GRID_PREFIX}${JSON.stringify(values)}`;
 }
 
+function isGridMetaItem(item: ResultItemPayload): boolean {
+  const norm = getResultItemNormValue(item);
+  return item.name === PDF_TABLE_RESULT_NAME || norm.startsWith(GRID_PREFIX);
+}
+
 export function decodeGridFillFromItems(
   items: ResultItemPayload[],
   analysisId: number,
 ): Record<string, string> {
-  const meta = items.find(
-    i =>
-      Number(i.analysis_id) === analysisId &&
-      (i.name === PDF_TABLE_RESULT_NAME || String(i.normValue || "").startsWith(GRID_PREFIX)),
-  );
-  const raw = meta?.normValue?.trim() || "";
+  const meta =
+    items.find(
+      i => resolveResultItemAnalysisId(i) === analysisId && isGridMetaItem(i),
+    ) ??
+    // Fallback: single grid payload on this result (analysis id field missing/mismatched)
+    (items.filter(isGridMetaItem).length === 1
+      ? items.find(isGridMetaItem)
+      : undefined);
+
+  const raw = meta ? getResultItemNormValue(meta) : "";
   if (!raw.startsWith(GRID_PREFIX)) return {};
   try {
     const parsed = JSON.parse(raw.slice(GRID_PREFIX.length)) as Record<string, string>;
@@ -271,6 +354,8 @@ export function sanitizeResultPayload(payload: ResultPayload): ResultPayload {
     order_id: Number(payload.order_id),
     lab_director_id: Number(payload.lab_director_id),
     result_item: payload.result_item.map(item => {
+      const analysisId = resolveResultItemAnalysisId(item) ?? Number(item.analysis_id);
+      const normValue = getResultItemNormValue(item) || item.normValue || null;
       let min = toApiNumber(item.min);
       let max = toApiNumber(item.max);
       let minValue = toApiNumber(item.minValue);
@@ -285,7 +370,7 @@ export function sanitizeResultPayload(payload: ResultPayload): ResultPayload {
       const measured =
         minValue ??
         maxValue ??
-        toApiNumber(item.normValue) ??
+        toApiNumber(normValue) ??
         min ??
         max ??
         0;
@@ -296,7 +381,7 @@ export function sanitizeResultPayload(payload: ResultPayload): ResultPayload {
       if (maxValue == null) maxValue = measured;
 
       return {
-        analysis_id: Number(item.analysis_id),
+        analysis_id: Number(analysisId),
         name: item.name,
         have_or_not: item.have_or_not ?? null,
         unit: item.unit ?? null,
@@ -306,7 +391,7 @@ export function sanitizeResultPayload(payload: ResultPayload): ResultPayload {
         standard: item.standard ?? null,
         have_or_notValue: item.have_or_notValue ?? null,
         unitValue: item.unitValue ?? null,
-        normValue: item.normValue ?? null,
+        normValue,
         minValue,
         maxValue,
         standardValue: item.standardValue ?? null,
@@ -315,18 +400,35 @@ export function sanitizeResultPayload(payload: ResultPayload): ResultPayload {
   };
 }
 
-export function addResult(payload: ResultPayload) {
-  return apiRequest<ResultRecord>("/result/add", {
+export async function addResult(payload: ResultPayload) {
+  const raw = await apiRequest<unknown>("/result/add", {
     method: "POST",
     body: sanitizeResultPayload(payload),
     fallbackError: "Natijani qo'shib bo'lmadi",
   });
+  const normalized = normalizeResultRecord(raw);
+  // Prefer our payload items if API omits nested result_item on create
+  if (normalized) {
+    if (getResultItems(normalized).length === 0) {
+      return { ...normalized, result_item: payload.result_item };
+    }
+    return normalized;
+  }
+  return { id: 0, order_id: payload.order_id, result_item: payload.result_item } as ResultRecord;
 }
 
-export function updateResult(id: number, payload: ResultPayload) {
-  return apiRequest<ResultRecord>(`/result/update/${id}`, {
+export async function updateResult(id: number, payload: ResultPayload) {
+  const raw = await apiRequest<unknown>(`/result/update/${id}`, {
     method: "PATCH",
     body: sanitizeResultPayload(payload),
     fallbackError: "Natijani yangilab bo'lmadi",
   });
+  const normalized = normalizeResultRecord(raw);
+  if (normalized) {
+    if (getResultItems(normalized).length === 0) {
+      return { ...normalized, id, result_item: payload.result_item };
+    }
+    return { ...normalized, id: normalized.id || id };
+  }
+  return { id, order_id: payload.order_id, result_item: payload.result_item } as ResultRecord;
 }

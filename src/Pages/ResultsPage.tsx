@@ -1,9 +1,12 @@
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
-  ArrowLeft, Save, FileText, Lock,
+  ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut,
 } from "lucide-react";
+import html2canvas from "html2canvas-pro";
+import { jsPDF } from "jspdf";
 import {
   getAllOrders,
   getOrderById,
@@ -22,6 +25,7 @@ import {
   getAllResults,
   getResultById,
   getResultItems,
+  resolveResultItemAnalysisId,
   updateResult,
   type ResultRecord,
 } from "@/api/result";
@@ -31,9 +35,11 @@ import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
+  A4_HEIGHT,
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_SCALE,
   A4_PREVIEW_WIDTH,
+  A4_WIDTH,
   bodyCellKey,
   formatDynamicDisplay,
   getActivePdfTemplate,
@@ -45,6 +51,11 @@ import {
 } from "@/lib/pdfTemplate";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
+
+const PDF_ZOOM_MIN = 0.5;
+const PDF_ZOOM_MAX = 2;
+const PDF_ZOOM_STEP = 0.1;
+const PDF_ZOOM_DEFAULT = 1;
 
 type OrderAnalysisRow = {
   key: string;
@@ -93,7 +104,9 @@ function flattenOrderAnalyses(
     for (const item of orderItems) {
       const analysisId = resolveOrderItemAnalysisId(item);
       if (!analysisId) continue;
-      const savedForAnalysis = savedItems.some(ri => Number(ri.analysis_id) === analysisId);
+      const savedForAnalysis = savedItems.some(
+        ri => resolveResultItemAnalysisId(ri) === analysisId,
+      );
       rows.push({
         key: `${order.id}-${item.id}`,
         orderId: order.id,
@@ -153,6 +166,20 @@ function buildDynamicContext(
   };
 }
 
+function bindTemplateToAnalysis(
+  base: PdfTemplate,
+  analysisId: number,
+  analysisName: string,
+): PdfTemplate {
+  const cloned = structuredClone(base) as PdfTemplate;
+  const table = cloned.elements.find(el => el.type === "table");
+  if (table) {
+    table.analysisId = analysisId;
+    table.analysisName = analysisName;
+  }
+  return cloned;
+}
+
 function resolveTemplateForAnalysis(analysisId: number, analysisName: string): PdfTemplate | null {
   const list = loadPdfTemplates();
   const active = getActivePdfTemplate();
@@ -166,14 +193,7 @@ function resolveTemplateForAnalysis(analysisId: number, analysisName: string): P
     null;
 
   if (!base) return null;
-
-  const cloned = structuredClone(base) as PdfTemplate;
-  const table = cloned.elements.find(el => el.type === "table");
-  if (table) {
-    table.analysisId = analysisId;
-    table.analysisName = analysisName;
-  }
-  return cloned;
+  return bindTemplateToAnalysis(base, analysisId, analysisName);
 }
 
 export function ResultsPage({ primaryColor }: { primaryColor: string }) {
@@ -185,11 +205,16 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [selected, setSelected] = useState<OrderAnalysisRow | null>(null);
   const [template, setTemplate] = useState<PdfTemplate | null>(null);
+  const [availableTemplates, setAvailableTemplates] = useState<PdfTemplate[]>([]);
   const [bodyPatterns, setBodyPatterns] = useState<Pattern[]>([]);
   const [fillValues, setFillValues] = useState<Record<string, string>>({});
   const [dynamicCtx, setDynamicCtx] = useState<PdfDynamicContext | null>(null);
   const [saving, setSaving] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [pdfZoom, setPdfZoom] = useState(PDF_ZOOM_DEFAULT);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
     const id = Date.now();
@@ -245,7 +270,10 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const openRow = async (row: OrderAnalysisRow) => {
     setOpening(true);
     setSelected(row);
+    setPdfZoom(PDF_ZOOM_DEFAULT);
     try {
+      const allTemplates = loadPdfTemplates();
+      setAvailableTemplates(allTemplates);
       const tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName);
       setTemplate(tpl);
 
@@ -268,18 +296,28 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
       let resultRec: ResultRecord | null = null;
       let savedItems: ReturnType<typeof getResultItems> = [];
+      const cachedRec = findResultByOrderId(resultsCache, row.orderId);
 
       if (row.resultId) {
         try {
           resultRec = await getResultById(row.resultId);
           savedItems = getResultItems(resultRec);
         } catch {
-          resultRec = findResultByOrderId(resultsCache, row.orderId);
+          resultRec = cachedRec;
           savedItems = resultRec ? getResultItems(resultRec) : [];
         }
       } else {
-        resultRec = findResultByOrderId(resultsCache, row.orderId);
+        resultRec = cachedRec;
         savedItems = resultRec ? getResultItems(resultRec) : [];
+      }
+
+      // getby sometimes omits nested items — fall back to cache for fills
+      if (savedItems.length === 0 && cachedRec) {
+        const cachedItems = getResultItems(cachedRec);
+        if (cachedItems.length > 0) {
+          savedItems = cachedItems;
+          if (!resultRec) resultRec = cachedRec;
+        }
       }
 
       setDynamicCtx(buildDynamicContext(row, order, resultRec));
@@ -299,9 +337,24 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const closeDetail = () => {
     setSelected(null);
     setTemplate(null);
+    setAvailableTemplates([]);
     setBodyPatterns([]);
     setFillValues({});
     setDynamicCtx(null);
+    setPdfZoom(PDF_ZOOM_DEFAULT);
+  };
+
+  const zoomIn = () =>
+    setPdfZoom(z => Math.min(PDF_ZOOM_MAX, Math.round((z + PDF_ZOOM_STEP) * 10) / 10));
+  const zoomOut = () =>
+    setPdfZoom(z => Math.max(PDF_ZOOM_MIN, Math.round((z - PDF_ZOOM_STEP) * 10) / 10));
+  const zoomReset = () => setPdfZoom(PDF_ZOOM_DEFAULT);
+
+  const handleTemplateChange = (templateId: string) => {
+    if (!selected) return;
+    const base = availableTemplates.find(t => t.id === templateId);
+    if (!base) return;
+    setTemplate(bindTemplateToAnalysis(base, selected.analysisId, selected.analysisName));
   };
 
   const updateFill = (patternId: number | string, col: number, value: string) => {
@@ -309,12 +362,12 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setFillValues(prev => ({ ...prev, [key]: value }));
   };
 
-  const handleSaveValues = async () => {
-    if (!selected) return;
+  const handleSaveValues = async (): Promise<boolean> => {
+    if (!selected) return false;
     const user = getStoredUser();
     if (!user?.id) {
       pushToast("Foydalanuvchi topilmadi — qayta kiring", "error");
-      return;
+      return false;
     }
 
     setSaving(true);
@@ -333,7 +386,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       }
 
       const otherItems = existing
-        ? getResultItems(existing).filter(ri => Number(ri.analysis_id) !== selected.analysisId)
+        ? getResultItems(existing).filter(
+            ri => resolveResultItemAnalysisId(ri) !== selected.analysisId,
+          )
         : [];
 
       const payload = {
@@ -349,12 +404,21 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         saved = await addResult(payload);
       }
 
-      const savedId = saved.id;
+      // Always keep the items we just saved in cache (API may omit nested items)
+      const cached: ResultRecord = {
+        ...saved,
+        id: saved.id || existing?.id || 0,
+        order_id: selected.orderId,
+        result_item:
+          getResultItems(saved).length > 0 ? getResultItems(saved) : payload.result_item,
+      };
+
+      const savedId = cached.id;
       setResultsCache(list => {
         const without = list.filter(
           r => r.id !== savedId && findResultByOrderId([r], selected.orderId) == null,
         );
-        return [...without, saved];
+        return [...without, cached];
       });
       setRows(list =>
         list.map(r =>
@@ -384,18 +448,114 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       }
 
       pushToast(existing?.id ? "Natija yangilandi" : "Natija saqlandi");
+      return true;
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Saqlab bo'lmadi", "error");
+      return false;
     } finally {
       setSaving(false);
     }
   };
+
+  const handleDownloadPdf = async () => {
+    if (!selected || !template || !hasTableReady()) return;
+
+    setDownloading(true);
+    try {
+      const saved = await handleSaveValues();
+      if (!saved) return;
+
+      flushSync(() => setExporting(true));
+      await new Promise(r => setTimeout(r, 80));
+
+      const el = pdfRef.current;
+      if (!el) {
+        pushToast("PDF element topilmadi", "error");
+        return;
+      }
+
+      const captureScale = 2;
+      const canvas = await html2canvas(el, {
+        scale: captureScale,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        onclone: (_doc, cloned) => {
+          // scale:2 → 0.5px CSS = 1px in the final bitmap/PDF
+          const border = `${1 / captureScale}px solid #000`;
+          cloned.querySelectorAll("table").forEach(t => {
+            const table = t as HTMLElement;
+            table.style.border = "none";
+            table.style.borderCollapse = "collapse";
+            table.style.borderSpacing = "0";
+          });
+          cloned.querySelectorAll("th, td").forEach(cell => {
+            const node = cell as HTMLElement;
+            node.style.border = border;
+            node.style.outline = "none";
+            node.style.boxShadow = "none";
+          });
+        },
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "pt",
+        format: [A4_WIDTH, A4_HEIGHT],
+      });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgData = canvas.toDataURL("image/png");
+
+      // Preview px → A4 pt; float rounding often makes imgH ≈ pageH + 0.5pt
+      let imgW = pageW;
+      let imgH = (canvas.height * imgW) / canvas.width;
+
+      if (imgH <= pageH * 1.02) {
+        // One A4 page — fit exactly, no blank 2nd page
+        const fit = Math.min(1, pageH / imgH);
+        imgW *= fit;
+        imgH *= fit;
+        pdf.addImage(imgData, "PNG", (pageW - imgW) / 2, 0, imgW, imgH);
+      } else {
+        let heightLeft = imgH;
+        let position = 0;
+        pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+        heightLeft -= pageH;
+        while (heightLeft > pageH * 0.02) {
+          position = heightLeft - imgH;
+          pdf.addPage();
+          pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+          heightLeft -= pageH;
+        }
+      }
+
+      const safeName = selected.analysisName
+        .replace(/[^\w\u0400-\u04FF\u0500-\u052F\-]+/g, "_")
+        .replace(/_+/g, "_")
+        .slice(0, 60);
+      pdf.save(`natija_${selected.orderId}_${safeName || "analiz"}.pdf`);
+      pushToast("PDF yuklab olindi");
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "PDF yuklab bo'lmadi", "error");
+    } finally {
+      setExporting(false);
+      setDownloading(false);
+    }
+  };
+
+  const hasTableReady = () => Boolean(template?.elements.some(el => el.type === "table"));
 
   if (selected) {
     const hasTable = Boolean(template?.elements.some(el => el.type === "table"));
     const tableEl = template?.elements.find(el => el.type === "table");
     const grid = normalizeTableData(tableEl?.tableData);
     const inputCols = Math.max(0, grid.cols - 1);
+    const previewPageHeight = Math.max(
+      A4_PREVIEW_HEIGHT,
+      A4_PREVIEW_HEIGHT + Math.max(0, bodyPatterns.length - 8) * 18 + grid.headerRows * 8,
+    );
 
     return (
       <main className="flex-1 overflow-y-auto p-6 space-y-4 ses-scrollbar">
@@ -417,18 +577,56 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               {selected.resultId ? ` · Result #${selected.resultId}` : ""}
             </p>
           </div>
+          <label className="flex items-center gap-2 min-w-[200px] max-w-xs">
+            <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+              Shablon
+            </span>
+            <select
+              value={template?.id ?? ""}
+              disabled={opening || availableTemplates.length === 0}
+              onChange={e => handleTemplateChange(e.target.value)}
+              className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[12px] font-medium text-foreground focus:outline-none focus:border-[var(--primary)] disabled:opacity-50"
+            >
+              {availableTemplates.length === 0 ? (
+                <option value="">Shablon yo&apos;q</option>
+              ) : (
+                availableTemplates.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-muted-foreground">
             <Lock className="w-3 h-3" /> Faqat jadval inputlari
           </div>
           <button
             type="button"
-            disabled={saving || !hasTable}
+            disabled={saving || downloading || !hasTable}
             onClick={() => void handleSaveValues()}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
             style={{ background: primaryColor }}
           >
-            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
+            {saving && !downloading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Save className="w-3.5 h-3.5" />
+            )}
             {selected.resultId ? "Yangilash" : "Saqlash"}
+          </button>
+          <button
+            type="button"
+            disabled={saving || downloading || !hasTable || opening}
+            onClick={() => void handleDownloadPdf()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-secondary text-[12px] font-semibold text-foreground border border-border hover:opacity-90 disabled:opacity-50"
+          >
+            {downloading ? (
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            ) : (
+              <Download className="w-3.5 h-3.5" />
+            )}
+            Yuklab olish
           </button>
         </div>
 
@@ -462,20 +660,68 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                   {bodyPatterns.length} · Input ustunlar: {inputCols}
                 </p>
               </div>
-              <span
-                className={`inline-flex px-2.5 py-1 rounded-lg text-[11px] font-semibold ${statusBadgeClass(selected.itemStatus)}`}
-              >
-                {statusLabel(selected.itemStatus)}
-              </span>
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center gap-0.5 rounded-xl bg-secondary border border-border p-0.5">
+                  <button
+                    type="button"
+                    title="Uzoqlashtirish"
+                    disabled={pdfZoom <= PDF_ZOOM_MIN}
+                    onClick={zoomOut}
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-foreground hover:bg-card disabled:opacity-40"
+                  >
+                    <ZoomOut className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    title="Masshtabni tiklash"
+                    onClick={zoomReset}
+                    className="min-w-[3.25rem] px-1.5 h-8 rounded-lg text-[11px] font-semibold text-foreground hover:bg-card tabular-nums"
+                  >
+                    {Math.round(pdfZoom * 100)}%
+                  </button>
+                  <button
+                    type="button"
+                    title="Yaqinlashtirish"
+                    disabled={pdfZoom >= PDF_ZOOM_MAX}
+                    onClick={zoomIn}
+                    className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-foreground hover:bg-card disabled:opacity-40"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <span
+                  className={`inline-flex px-2.5 py-1 rounded-lg text-[11px] font-semibold ${statusBadgeClass(selected.itemStatus)}`}
+                >
+                  {statusLabel(selected.itemStatus)}
+                </span>
+              </div>
             </div>
-            <div className="p-4 md:p-6 overflow-auto ses-scrollbar bg-secondary/40 flex justify-center max-h-[calc(100vh-180px)]">
-              <ResultPdfCanvas
-                template={template}
-                patterns={bodyPatterns}
-                fillValues={fillValues}
-                dynamicCtx={dynamicCtx}
-                onFillChange={updateFill}
-              />
+            <div className="p-4 md:p-6 overflow-auto ses-scrollbar bg-secondary/40 max-h-[calc(100vh-180px)]">
+              <div
+                className="mx-auto"
+                style={{
+                  width: A4_PREVIEW_WIDTH * pdfZoom,
+                  height: previewPageHeight * pdfZoom,
+                }}
+              >
+                <div
+                  style={{
+                    width: A4_PREVIEW_WIDTH,
+                    transform: `scale(${pdfZoom})`,
+                    transformOrigin: "top left",
+                  }}
+                >
+                  <ResultPdfCanvas
+                    ref={pdfRef}
+                    template={template}
+                    patterns={bodyPatterns}
+                    fillValues={fillValues}
+                    dynamicCtx={dynamicCtx}
+                    onFillChange={updateFill}
+                    readOnly={exporting}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -591,30 +837,36 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   );
 }
 
-function ResultPdfCanvas({
-  template,
-  patterns,
-  fillValues,
-  dynamicCtx,
-  onFillChange,
-}: {
-  template: PdfTemplate;
-  patterns: Pattern[];
-  fillValues: Record<string, string>;
-  dynamicCtx: PdfDynamicContext | null;
-  onFillChange: (patternId: number | string, col: number, value: string) => void;
-}) {
+const ResultPdfCanvas = React.forwardRef<
+  HTMLDivElement,
+  {
+    template: PdfTemplate;
+    patterns: Pattern[];
+    fillValues: Record<string, string>;
+    dynamicCtx: PdfDynamicContext | null;
+    onFillChange: (patternId: number | string, col: number, value: string) => void;
+    readOnly?: boolean;
+  }
+>(function ResultPdfCanvas(
+  { template, patterns, fillValues, dynamicCtx, onFillChange, readOnly = false },
+  ref,
+) {
   const tableEl = template.elements.find(el => el.type === "table");
   const grid = normalizeTableData(tableEl?.tableData);
   const pageHeight = Math.max(
     A4_PREVIEW_HEIGHT,
     A4_PREVIEW_HEIGHT + Math.max(0, patterns.length - 8) * 18 + grid.headerRows * 8,
   );
+  // Exact A4 aspect when content fits one page (avoids blank 2nd PDF page)
+  const a4PreviewHeight = Math.round((A4_PREVIEW_WIDTH * A4_HEIGHT) / A4_WIDTH);
+  const height =
+    readOnly && pageHeight <= a4PreviewHeight * 1.05 ? a4PreviewHeight : pageHeight;
 
   return (
     <div
-      className="relative bg-white shadow-xl border border-slate-200 shrink-0"
-      style={{ width: A4_PREVIEW_WIDTH, height: pageHeight }}
+      ref={ref}
+      className={`relative bg-white shrink-0 ${readOnly ? "" : "shadow-xl border border-slate-200"}`}
+      style={{ width: A4_PREVIEW_WIDTH, height }}
     >
       {template.elements.map(el => (
         <FillableElement
@@ -624,11 +876,12 @@ function ResultPdfCanvas({
           fillValues={fillValues}
           dynamicCtx={dynamicCtx}
           onFillChange={onFillChange}
+          readOnly={readOnly}
         />
       ))}
     </div>
   );
-}
+});
 
 function FillableElement({
   element,
@@ -636,12 +889,14 @@ function FillableElement({
   fillValues,
   dynamicCtx,
   onFillChange,
+  readOnly = false,
 }: {
   element: PdfElement;
   patterns: Pattern[];
   fillValues: Record<string, string>;
   dynamicCtx: PdfDynamicContext | null;
   onFillChange: (patternId: number | string, col: number, value: string) => void;
+  readOnly?: boolean;
 }) {
   const isTable = element.type === "table";
 
@@ -668,7 +923,7 @@ function FillableElement({
         width: element.width * A4_PREVIEW_SCALE,
         minHeight: element.height * A4_PREVIEW_SCALE,
         zIndex: isTable ? 20 : 1,
-        pointerEvents: isTable ? "auto" : "none",
+        pointerEvents: isTable && !readOnly ? "auto" : "none",
       }}
     >
       {element.type === "image" ? (
@@ -678,15 +933,17 @@ function FillableElement({
             alt=""
             className="w-full h-full object-contain pointer-events-none select-none"
             draggable={false}
+            crossOrigin="anonymous"
           />
         ) : null
       ) : element.type === "table" ? (
-        <div className="w-full bg-white" style={{ pointerEvents: "auto" }}>
+        <div className="w-full bg-white" style={{ pointerEvents: readOnly ? "none" : "auto" }}>
           <CustomPdfTable
             data={normalizeTableData(element.tableData)}
             patterns={patterns.map(p => ({ id: p.id, name: p.name }))}
             fillValues={fillValues}
             onFillChange={onFillChange}
+            readOnly={readOnly}
             compact
           />
         </div>

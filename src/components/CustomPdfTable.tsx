@@ -1,3 +1,4 @@
+import type { CSSProperties } from "react";
 import {
   bodyCellKey,
   isInSelection,
@@ -24,6 +25,8 @@ export type CustomPdfTableProps = {
   /** Results: fill body input columns (col >= 1) */
   fillValues?: Record<string, string>;
   onFillChange?: (patternId: number | string, col: number, value: string) => void;
+  /** Export/print: show values as text instead of inputs */
+  readOnly?: boolean;
   compact?: boolean;
   className?: string;
 };
@@ -43,6 +46,7 @@ export function CustomPdfTable({
   onChangeHeaderCell,
   fillValues,
   onFillChange,
+  readOnly = false,
   compact = false,
   className = "",
 }: CustomPdfTableProps) {
@@ -54,11 +58,26 @@ export function CustomPdfTable({
     : "w-full min-h-[22px] text-center bg-transparent border-0 outline-none text-[11px] text-black";
 
   const filling = fillValues != null;
+  // Export: only cell borders at 1px (no table+cell double stroke)
+  const cellBorder = readOnly
+    ? "align-middle"
+    : `border border-black align-middle`;
+  const cellBorderStyle: CSSProperties | undefined = readOnly
+    ? { border: "1px solid #000", boxSizing: "border-box" }
+    : undefined;
+  const tableStyle: CSSProperties = {
+    tableLayout: "fixed",
+    borderCollapse: "collapse",
+    borderSpacing: 0,
+    ...(readOnly ? { border: "none" } : {}),
+  };
 
   return (
     <table
-      className={`w-full border-collapse border border-black bg-white text-black ${fs} ${className}`}
-      style={{ tableLayout: "fixed" }}
+      className={`w-full border-collapse bg-white text-black ${fs} ${className} ${
+        readOnly ? "" : "border border-black"
+      }`}
+      style={tableStyle}
     >
       <thead>
         {grid.headerCells.map((row, ri) => (
@@ -85,7 +104,8 @@ export function CustomPdfTable({
                     key={ci}
                     colSpan={cs}
                     rowSpan={rs}
-                    className={`border border-black ${pad} align-middle p-0 font-semibold relative ${
+                    style={cellBorderStyle}
+                    className={`${cellBorder} ${pad} p-0 font-semibold relative ${
                       highlighted
                         ? "outline outline-2 outline-offset-[-2px] outline-sky-500 bg-sky-100"
                         : "bg-slate-50"
@@ -117,7 +137,8 @@ export function CustomPdfTable({
                   key={ci}
                   colSpan={cs}
                   rowSpan={rs}
-                  className={`border border-black ${pad} font-semibold text-center align-middle bg-slate-50`}
+                  style={cellBorderStyle}
+                  className={`${cellBorder} ${pad} font-semibold text-center bg-slate-50`}
                 >
                   {cell.text || "\u00a0"}
                 </th>
@@ -131,7 +152,8 @@ export function CustomPdfTable({
           <tr>
             <td
               colSpan={grid.cols}
-              className={`border border-black ${pad} text-center text-slate-400`}
+              style={cellBorderStyle}
+              className={`${cellBorder} ${pad} text-center text-slate-400`}
             >
               Analiz tanlang — patternlar shu yerda chiqadi
             </td>
@@ -144,7 +166,8 @@ export function CustomPdfTable({
                   return (
                     <td
                       key={ci}
-                      className={`border border-black ${pad} text-left align-middle`}
+                      style={cellBorderStyle}
+                      className={`${cellBorder} ${pad} text-left`}
                     >
                       {p.name}
                     </td>
@@ -153,13 +176,25 @@ export function CustomPdfTable({
 
                 if (filling) {
                   const key = bodyCellKey(p.id, ci);
+                  const value = fillValues?.[key] ?? "";
+                  if (readOnly) {
+                    return (
+                      <td
+                        key={ci}
+                        style={cellBorderStyle}
+                        className={`${cellBorder} ${pad} text-center`}
+                      >
+                        {value || "\u00a0"}
+                      </td>
+                    );
+                  }
                   return (
                     <td
                       key={ci}
-                      className={`border border-black ${pad} text-center align-middle p-0`}
+                      className={`${cellBorder} ${pad} text-center p-0`}
                     >
                       <input
-                        value={fillValues?.[key] ?? ""}
+                        value={value}
                         onChange={e => onFillChange?.(p.id, ci, e.target.value)}
                         className={inputCls}
                         onClick={e => e.stopPropagation()}
@@ -172,7 +207,7 @@ export function CustomPdfTable({
                 return (
                   <td
                     key={ci}
-                    className={`border border-black ${pad} text-center align-middle bg-amber-50/40`}
+                    className={`${cellBorder} ${pad} text-center bg-amber-50/40`}
                   >
                     <span className="inline-block w-full min-h-[1em] text-slate-300 text-[9px]">
                       input

@@ -51,7 +51,7 @@ const EMPTY_FORM: PatientForm = {
   first_name: "",
   last_name: "",
   birth_day: "",
-  phone: "",
+  phone: "+998",
   sex: "",
   village: "",
   street: "",
@@ -64,6 +64,38 @@ const EMPTY_FORM: PatientForm = {
 function normalizeBirthDay(value: string): string {
   if (!value) return "";
   return value.slice(0, 10);
+}
+
+/** Format: 2 letters + exactly 7 digits (e.g. AA1234567) */
+const PASSPORT_PATTERN = /^[A-Z]{2}\d{7}$/;
+
+function formatPassportNumber(raw: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  let letters = "";
+  let digits = "";
+
+  for (const ch of cleaned) {
+    if (letters.length < 2) {
+      if (/[A-Z]/.test(ch)) letters += ch;
+      continue;
+    }
+    if (digits.length < 7 && /\d/.test(ch)) digits += ch;
+  }
+
+  return letters + digits;
+}
+
+/** Always starts with +998, then exactly up to 9 digits */
+const PHONE_PREFIX = "+998";
+const PHONE_PATTERN = /^\+998\d{9}$/;
+
+function formatPhoneNumber(raw: string): string {
+  let digits = raw.replace(/\D/g, "");
+
+  // Drop leading country code if user typed/pasted 998...
+  if (digits.startsWith("998")) digits = digits.slice(3);
+
+  return PHONE_PREFIX + digits.slice(0, 9);
 }
 
 function patientToForm(p: Patient, regions: Region[]): PatientForm {
@@ -79,11 +111,11 @@ function patientToForm(p: Patient, regions: Region[]): PatientForm {
     first_name: p.first_name ?? "",
     last_name: p.last_name ?? "",
     birth_day: normalizeBirthDay(p.birth_day ?? ""),
-    phone: p.phone ?? "",
+    phone: formatPhoneNumber(p.phone ?? ""),
     sex: p.sex === 1 || p.sex === 2 ? p.sex : "",
     village: p.village ?? "",
     street: p.street ?? "",
-    passport_number: p.passport_number ?? "",
+    passport_number: formatPassportNumber(p.passport_number ?? ""),
     description: p.description ?? "",
     region_id: regionId,
     district_id: districtId === "" ? "" : Number(districtId),
@@ -238,8 +270,8 @@ export function PatientsPage({
           first_name: filter.first_name,
           last_name: filter.last_name,
           birth_day: filter.birth_day,
-          phone: filter.phone,
-          passport_number: filter.passport_number,
+          phone: formatPhoneNumber(filter.phone || PHONE_PREFIX),
+          passport_number: formatPassportNumber(filter.passport_number),
         });
         pushToast("Bemor topilmadi. Ma'lumotlarni qo'lda to'ldiring", "info");
         return;
@@ -268,11 +300,21 @@ export function PatientsPage({
     if (!form.first_name.trim()) e.first_name = "Ism kiritilishi shart";
     if (!form.last_name.trim()) e.last_name = "Familiya kiritilishi shart";
     if (!form.birth_day) e.birth_day = "Tug'ilgan kun kiritilishi shart";
-    if (!form.phone.trim()) e.phone = "Telefon kiritilishi shart";
+    const phone = formatPhoneNumber(form.phone);
+    if (phone === PHONE_PREFIX) {
+      e.phone = "Telefon kiritilishi shart";
+    } else if (!PHONE_PATTERN.test(phone)) {
+      e.phone = "Format: +998 dan keyin 9 ta raqam (masalan: +998901234567)";
+    }
     if (form.sex !== 1 && form.sex !== 2) e.sex = "Jinsni tanlang";
     if (!form.village.trim()) e.village = "MFY / qishloq kiritilishi shart";
     if (!form.street.trim()) e.street = "Ko'cha / manzil kiritilishi shart";
-    if (!form.passport_number.trim()) e.passport_number = "Passport raqami kiritilishi shart";
+    const passport = formatPassportNumber(form.passport_number);
+    if (!passport) {
+      e.passport_number = "Passport raqami kiritilishi shart";
+    } else if (!PASSPORT_PATTERN.test(passport)) {
+      e.passport_number = "Format: 2 ta harf + 7 ta raqam (masalan: AA1234567)";
+    }
     if (form.region_id === "") e.region_id = "Viloyatni tanlang";
     if (form.district_id === "") e.district_id = "Tumanni tanlang";
     setErrors(e);
@@ -288,11 +330,11 @@ export function PatientsPage({
       first_name: form.first_name.trim(),
       last_name: form.last_name.trim(),
       birth_day: form.birth_day,
-      phone: form.phone.trim(),
+      phone: formatPhoneNumber(form.phone),
       sex: Number(form.sex),
       village: form.village.trim(),
       street: form.street.trim(),
-      passport_number: form.passport_number.trim(),
+      passport_number: formatPassportNumber(form.passport_number),
       description: form.description.trim(),
       district_id: Number(form.district_id),
       owner_id: user.id,
@@ -589,10 +631,35 @@ export function PatientsPage({
             </Field>
             <Field label="Telefon *" error={errors.phone}>
               <input
-                type="text"
-                value={form.phone}
+                type="tel"
+                value={form.phone || PHONE_PREFIX}
                 placeholder="+998901234567"
-                onChange={e => setFormField("phone", e.target.value)}
+                maxLength={13}
+                inputMode="numeric"
+                autoComplete="tel"
+                onChange={e => setFormField("phone", formatPhoneNumber(e.target.value))}
+                onFocus={e => {
+                  if (!form.phone || form.phone === PHONE_PREFIX) {
+                    setFormField("phone", PHONE_PREFIX);
+                  }
+                  requestAnimationFrame(() => {
+                    const el = e.target;
+                    if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                      el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                    }
+                  });
+                }}
+                onKeyDown={e => {
+                  const input = e.currentTarget;
+                  const start = input.selectionStart ?? 0;
+                  const end = input.selectionEnd ?? 0;
+                  const touchingPrefix =
+                    start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                  if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
+                    e.preventDefault();
+                    input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                  }
+                }}
                 className={inputCls(errors.phone)}
               />
             </Field>
@@ -649,12 +716,16 @@ export function PatientsPage({
                 })}
               </div>
             </Field>
-            <Field label="Passport raqami *" error={errors.passport_number}>
+            <Field label="Passport seriya va raqami *" error={errors.passport_number}>
               <input
                 type="text"
                 value={form.passport_number}
                 placeholder="AA1234567"
-                onChange={e => setFormField("passport_number", e.target.value)}
+                maxLength={9}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={e => setFormField("passport_number", formatPassportNumber(e.target.value))}
                 className={inputCls(errors.passport_number)}
               />
             </Field>

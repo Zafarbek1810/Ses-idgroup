@@ -52,11 +52,11 @@ function AnalysisPickModal({
   analyses: Analysis[];
   primaryColor: string;
   existingKeys: Set<string>;
-  onSave: (item: Omit<CartItem, "key" | "status">) => void;
+  onSave: (items: Omit<CartItem, "key" | "status">[]) => void;
   onClose: () => void;
 }) {
   const [labId, setLabId] = useState<number | "">("");
-  const [analysisId, setAnalysisId] = useState<number | "">("");
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const labAnalyses = useMemo(() => {
@@ -64,34 +64,60 @@ function AnalysisPickModal({
     return analyses.filter(a => a.laboratory?.id === labId);
   }, [analyses, labId]);
 
-  const selectedAnalysis =
-    analysisId === "" ? null : labAnalyses.find(a => a.id === analysisId) ?? null;
+  const availableAnalyses = useMemo(
+    () =>
+      labAnalyses.filter(a => labId !== "" && !existingKeys.has(`${labId}:${a.id}`)),
+    [labAnalyses, labId, existingKeys],
+  );
+
+  const selectedAnalyses = useMemo(
+    () => availableAnalyses.filter(a => selectedIds.includes(a.id)),
+    [availableAnalyses, selectedIds],
+  );
+
+  const selectedTotal = useMemo(
+    () => selectedAnalyses.reduce((sum, a) => sum + parsePrice(a.price), 0),
+    [selectedAnalyses],
+  );
 
   const inputCls =
     "w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]";
+
+  const toggleAnalysis = (id: number) => {
+    setSelectedIds(prev =>
+      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+    );
+    setError(null);
+  };
+
+  const toggleAll = () => {
+    if (selectedIds.length === availableAnalyses.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(availableAnalyses.map(a => a.id));
+    }
+    setError(null);
+  };
 
   const handleSave = () => {
     if (labId === "") {
       setError("Laboratoriyani tanlang");
       return;
     }
-    if (!selectedAnalysis) {
-      setError("Analizni tanlang");
-      return;
-    }
-    const key = `${labId}:${selectedAnalysis.id}`;
-    if (existingKeys.has(key)) {
-      setError("Bu analiz allaqachon qo'shilgan");
+    if (selectedAnalyses.length === 0) {
+      setError("Kamida bitta analizni tanlang");
       return;
     }
     const lab = laboratories.find(l => l.id === labId);
-    onSave({
-      analysis_id: selectedAnalysis.id,
-      laboratory_id: labId,
-      analysis_name: selectedAnalysis.name,
-      laboratory_name: lab?.name ?? selectedAnalysis.laboratory?.name ?? "—",
-      price: parsePrice(selectedAnalysis.price),
-    });
+    onSave(
+      selectedAnalyses.map(a => ({
+        analysis_id: a.id,
+        laboratory_id: labId,
+        analysis_name: a.name,
+        laboratory_name: lab?.name ?? a.laboratory?.name ?? "—",
+        price: parsePrice(a.price),
+      })),
+    );
   };
 
   return (
@@ -102,7 +128,7 @@ function AnalysisPickModal({
           <div>
             <h2 className="font-semibold text-foreground text-[15px]">Analiz qo'shish</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Laboratoriya va analizni tanlang
+              Laboratoriya tanlab, bir nechta analizni belgilang
             </p>
           </div>
           <button
@@ -123,7 +149,7 @@ function AnalysisPickModal({
               value={labId === "" ? "" : String(labId)}
               onChange={e => {
                 setLabId(e.target.value ? Number(e.target.value) : "");
-                setAnalysisId("");
+                setSelectedIds([]);
                 setError(null);
               }}
               className={inputCls}
@@ -136,38 +162,73 @@ function AnalysisPickModal({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">
-              Analiz *
-            </label>
-            <select
-              value={analysisId === "" ? "" : String(analysisId)}
-              onChange={e => {
-                setAnalysisId(e.target.value ? Number(e.target.value) : "");
-                setError(null);
-              }}
-              disabled={labId === ""}
-              className={inputCls}
-            >
-              <option value="">
-                {labId === "" ? "Avval laboratoriya tanlang" : "Analiz tanlang"}
-              </option>
-              {labAnalyses.map(a => (
-                <option key={a.id} value={a.id}>
-                  {a.name} — {formatPrice(parsePrice(a.price))}
-                </option>
-              ))}
-            </select>
-            {selectedAnalysis && (
-              <p className="mt-2 text-[12px] text-muted-foreground">
-                Narx:{" "}
-                <span className="font-semibold text-foreground">
-                  {formatPrice(parsePrice(selectedAnalysis.price))}
-                </span>
-              </p>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="block text-xs font-semibold text-foreground">
+                Analizlar *{" "}
+                <span className="font-normal text-muted-foreground">(bir nechtasini tanlash mumkin)</span>
+              </label>
+              {labId !== "" && availableAnalyses.length > 0 && (
+                <button
+                  type="button"
+                  onClick={toggleAll}
+                  className="text-[11px] font-medium hover:underline"
+                  style={{ color: primaryColor }}
+                >
+                  {selectedIds.length === availableAnalyses.length
+                    ? "Barchasini bekor qilish"
+                    : "Barchasini tanlash"}
+                </button>
+              )}
+            </div>
+
+            {labId === "" ? (
+              <div className={`${inputCls} text-muted-foreground`}>
+                Avval laboratoriya tanlang
+              </div>
+            ) : availableAnalyses.length === 0 ? (
+              <div className={`${inputCls} text-amber-600`}>
+                {labAnalyses.length === 0
+                  ? "Bu laboratoriyada analiz topilmadi"
+                  : "Barcha analizlar allaqachon qo'shilgan"}
+              </div>
+            ) : (
+              <div className="bg-secondary border border-border rounded-xl max-h-56 overflow-y-auto divide-y divide-border">
+                {availableAnalyses.map(a => {
+                  const checked = selectedIds.includes(a.id);
+                  return (
+                    <label
+                      key={a.id}
+                      className="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer hover:bg-background/60 transition-colors select-none"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => toggleAnalysis(a.id)}
+                        className="w-4 h-4 rounded border-border accent-[var(--primary)] shrink-0"
+                      />
+                      <span className="flex-1 min-w-0 text-[13px] text-foreground truncate">
+                        {a.name}
+                      </span>
+                      <span className="text-[12px] text-muted-foreground shrink-0">
+                        {formatPrice(parsePrice(a.price))}
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
             )}
-            {labId !== "" && labAnalyses.length === 0 && (
-              <p className="mt-2 text-[11px] text-amber-600">
-                Bu laboratoriyada analiz topilmadi
+
+            {selectedAnalyses.length > 0 && (
+              <p className="mt-2 text-[12px] text-muted-foreground">
+                Tanlangan:{" "}
+                <span className="font-semibold text-foreground">
+                  {selectedAnalyses.length} ta
+                </span>
+                {" · "}
+                Jami:{" "}
+                <span className="font-semibold text-foreground">
+                  {formatPrice(selectedTotal)}
+                </span>
               </p>
             )}
           </div>
@@ -189,7 +250,9 @@ function AnalysisPickModal({
             className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
             style={{ background: primaryColor }}
           >
-            Saqlash
+            {selectedAnalyses.length > 0
+              ? `${selectedAnalyses.length} ta qo'shish`
+              : "Saqlash"}
           </button>
         </div>
       </div>
@@ -641,18 +704,24 @@ export function OrderPage({
   const paymentLabel =
     PAYMENT_OPTIONS.find(o => o.value === paymentMethod)?.label ?? null;
 
-  const handleAddAnalysis = (item: Omit<CartItem, "key" | "status">) => {
+  const handleAddAnalysis = (newItems: Omit<CartItem, "key" | "status">[]) => {
+    if (newItems.length === 0) return;
     setItems(list => [
       ...list,
-      {
+      ...newItems.map(item => ({
         ...item,
         key: `${item.laboratory_id}:${item.analysis_id}`,
-        status: "pending",
-      },
+        status: "pending" as const,
+      })),
     ]);
     setAnalysisModalOpen(false);
     setPaymentPaid(false);
-    pushToast("Analiz qo'shildi", "success");
+    pushToast(
+      newItems.length === 1
+        ? "Analiz qo'shildi"
+        : `${newItems.length} ta analiz qo'shildi`,
+      "success",
+    );
   };
 
   const handleRemoveItem = (key: string) => {

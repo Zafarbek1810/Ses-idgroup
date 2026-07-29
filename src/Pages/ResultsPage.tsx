@@ -220,7 +220,7 @@ function seedFillFromTemplate(
   for (let r = 0; r < grid.bodyRows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const cell = grid.bodyCells[r][c];
-      if (!isDynamicCell(cell)) continue;
+      if (cell.covered || !isDynamicCell(cell)) continue;
       const key = bodyCellKey(r, c);
       next[key] = Object.prototype.hasOwnProperty.call(saved, key)
         ? String(saved[key] ?? "")

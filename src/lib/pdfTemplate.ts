@@ -212,8 +212,9 @@ export type PdfTableData = {
   colWidths: number[];
 };
 
-/** Rectangular selection in the header (Excel-like) */
+/** Rectangular selection in header or body (Excel-like) */
 export type PdfTableSelection = {
+  section: "header" | "body";
   r1: number;
   c1: number;
   r2: number;
@@ -388,6 +389,7 @@ export function headerCellKey(row: number, col: number) {
 
 export function normalizeSelection(sel: PdfTableSelection): PdfTableSelection {
   return {
+    section: sel.section === "body" ? "body" : "header",
     r1: Math.min(sel.r1, sel.r2),
     c1: Math.min(sel.c1, sel.c2),
     r2: Math.max(sel.r1, sel.r2),
@@ -506,14 +508,14 @@ export function resizeHeaderRows(data: PdfTableData, nextHeaderRows: number): Pd
 export function resizeBodyRows(data: PdfTableData, nextBodyRows: number): PdfTableData {
   const prev = normalizeTableData(data);
   const br = clampInt(nextBodyRows, MIN_BODY_ROWS, MAX_BODY_ROWS);
-  return {
+  return sanitizeMerges({
     cols: prev.cols,
     headerRows: prev.headerRows,
     headerCells: prev.headerCells.map(r => r.map(c => ({ ...c }))),
     bodyRows: br,
     bodyCells: makeCellGrid(br, prev.cols, prev.bodyCells),
     colWidths: [...prev.colWidths],
-  };
+  });
 }
 
 export function updateHeaderCell(
@@ -539,6 +541,7 @@ export function updateBodyCell(
 ): PdfTableData {
   const next = normalizeTableData(data);
   if (row < 0 || col < 0 || row >= next.bodyRows || col >= next.cols) return next;
+  if (next.bodyCells[row][col].covered) return next;
   const bodyCells = next.bodyCells.map((r, ri) =>
     r.map((c, ci) => (ri === row && ci === col ? { ...c, ...patch } : { ...c })),
   );
@@ -550,19 +553,38 @@ export function updateColWidths(data: PdfTableData, colWidths: number[]): PdfTab
   return { ...next, colWidths: normalizeColWidths(colWidths, next.cols) };
 }
 
-/** Find the master cell that covers (row,col), or the cell itself */
+/** Find the master cell that covers (row,col) in header, or the cell itself */
 export function findMergeMaster(
   data: PdfTableData,
   row: number,
   col: number,
 ): { row: number; col: number } | null {
   const d = normalizeTableData(data);
-  if (row < 0 || col < 0 || row >= d.headerRows || col >= d.cols) return null;
-  const cell = d.headerCells[row][col];
+  return findGridMergeMaster(d.headerCells, d.headerRows, d.cols, row, col);
+}
+
+export function findBodyMergeMaster(
+  data: PdfTableData,
+  row: number,
+  col: number,
+): { row: number; col: number } | null {
+  const d = normalizeTableData(data);
+  return findGridMergeMaster(d.bodyCells, d.bodyRows, d.cols, row, col);
+}
+
+function findGridMergeMaster(
+  cells: PdfTableCell[][],
+  rows: number,
+  cols: number,
+  row: number,
+  col: number,
+): { row: number; col: number } | null {
+  if (row < 0 || col < 0 || row >= rows || col >= cols) return null;
+  const cell = cells[row][col];
   if (!cell.covered) return { row, col };
   for (let r = 0; r <= row; r++) {
     for (let c = 0; c <= col; c++) {
-      const m = d.headerCells[r][c];
+      const m = cells[r][c];
       if (m.covered) continue;
       const rs = m.rowSpan ?? 1;
       const cs = m.colSpan ?? 1;
@@ -574,9 +596,9 @@ export function findMergeMaster(
   return { row, col };
 }
 
-function clearMergeAt(data: PdfTableData, row: number, col: number): PdfTableData {
+function clearHeaderMergeAt(data: PdfTableData, row: number, col: number): PdfTableData {
   const d = normalizeTableData(data);
-  const master = findMergeMaster(d, row, col);
+  const master = findGridMergeMaster(d.headerCells, d.headerRows, d.cols, row, col);
   if (!master) return d;
   const m = d.headerCells[master.row][master.col];
   const rs = m.rowSpan ?? 1;
@@ -595,6 +617,27 @@ function clearMergeAt(data: PdfTableData, row: number, col: number): PdfTableDat
   return { ...d, headerCells };
 }
 
+function clearBodyMergeAt(data: PdfTableData, row: number, col: number): PdfTableData {
+  const d = normalizeTableData(data);
+  const master = findGridMergeMaster(d.bodyCells, d.bodyRows, d.cols, row, col);
+  if (!master) return d;
+  const m = d.bodyCells[master.row][master.col];
+  const rs = m.rowSpan ?? 1;
+  const cs = m.colSpan ?? 1;
+  const bodyCells = d.bodyCells.map(r => r.map(c => ({ ...c })));
+  for (let r = master.row; r < master.row + rs && r < d.bodyRows; r++) {
+    for (let c = master.col; c < master.col + cs && c < d.cols; c++) {
+      bodyCells[r][c] = {
+        ...bodyCells[r][c],
+        colSpan: 1,
+        rowSpan: 1,
+        covered: false,
+      };
+    }
+  }
+  return { ...d, bodyCells };
+}
+
 export function unmergeHeaderSelection(
   data: PdfTableData,
   sel: PdfTableSelection,
@@ -603,7 +646,21 @@ export function unmergeHeaderSelection(
   let next = normalizeTableData(data);
   for (let r = b.r1; r <= b.r2; r++) {
     for (let c = b.c1; c <= b.c2; c++) {
-      next = clearMergeAt(next, r, c);
+      next = clearHeaderMergeAt(next, r, c);
+    }
+  }
+  return next;
+}
+
+export function unmergeBodySelection(
+  data: PdfTableData,
+  sel: PdfTableSelection,
+): PdfTableData {
+  const b = normalizeSelection({ ...sel, section: "body" });
+  let next = normalizeTableData(data);
+  for (let r = b.r1; r <= b.r2; r++) {
+    for (let c = b.c1; c <= b.c2; c++) {
+      next = clearBodyMergeAt(next, r, c);
     }
   }
   return next;
@@ -613,10 +670,9 @@ export function mergeHeaderSelection(
   data: PdfTableData,
   sel: PdfTableSelection,
 ): PdfTableData {
-  const b = normalizeSelection(sel);
+  const b = normalizeSelection({ ...sel, section: "header" });
   if (b.r1 === b.r2 && b.c1 === b.c2) return normalizeTableData(data);
 
-  // Unmerge anything overlapping the range first
   let next = unmergeHeaderSelection(data, b);
   const headerCells = next.headerCells.map(r => r.map(c => ({ ...c })));
   const master = headerCells[b.r1][b.c1];
@@ -649,9 +705,50 @@ export function mergeHeaderSelection(
   return { ...next, headerCells };
 }
 
-function sanitizeMerges(data: PdfTableData): PdfTableData {
-  const d = normalizeTableData(data);
-  // Snapshot master cells before reset
+export function mergeBodySelection(
+  data: PdfTableData,
+  sel: PdfTableSelection,
+): PdfTableData {
+  const b = normalizeSelection({ ...sel, section: "body" });
+  if (b.r1 === b.r2 && b.c1 === b.c2) return normalizeTableData(data);
+
+  let next = unmergeBodySelection(data, b);
+  const bodyCells = next.bodyCells.map(r => r.map(c => ({ ...c })));
+  const master = bodyCells[b.r1][b.c1];
+  const text = master.text;
+  const valueMode = normalizeCellValueMode(master.valueMode);
+  const rowSpan = b.r2 - b.r1 + 1;
+  const colSpan = b.c2 - b.c1 + 1;
+
+  for (let r = b.r1; r <= b.r2; r++) {
+    for (let c = b.c1; c <= b.c2; c++) {
+      if (r === b.r1 && c === b.c1) {
+        bodyCells[r][c] = {
+          text,
+          colSpan,
+          rowSpan,
+          covered: false,
+          valueMode,
+        };
+      } else {
+        bodyCells[r][c] = {
+          text: "",
+          colSpan: 1,
+          rowSpan: 1,
+          covered: true,
+          valueMode: "static",
+        };
+      }
+    }
+  }
+  return { ...next, bodyCells };
+}
+
+function sanitizeGridMerges(
+  cells: PdfTableCell[][],
+  rows: number,
+  cols: number,
+): PdfTableCell[][] {
   const masters: Array<{
     r: number;
     c: number;
@@ -660,12 +757,12 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
     cs: number;
     valueMode: PdfCellValueMode;
   }> = [];
-  for (let r = 0; r < d.headerRows; r++) {
-    for (let c = 0; c < d.cols; c++) {
-      const cell = d.headerCells[r][c];
-      if (cell.covered) continue;
-      const cs = Math.min(Math.max(1, cell.colSpan ?? 1), d.cols - c);
-      const rs = Math.min(Math.max(1, cell.rowSpan ?? 1), d.headerRows - r);
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const cell = cells[r]?.[c];
+      if (!cell || cell.covered) continue;
+      const cs = Math.min(Math.max(1, cell.colSpan ?? 1), cols - c);
+      const rs = Math.min(Math.max(1, cell.rowSpan ?? 1), rows - r);
       masters.push({
         r,
         c,
@@ -677,11 +774,18 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
     }
   }
 
-  const headerCells = d.headerCells.map(row =>
-    row.map(cell => emptyTableCell(cell.covered ? "" : cell.text, normalizeCellValueMode(cell.valueMode))),
+  const out = Array.from({ length: rows }, (_, r) =>
+    Array.from({ length: cols }, (_, c) => {
+      const cell = cells[r]?.[c];
+      return emptyTableCell(
+        cell?.covered ? "" : (cell?.text ?? ""),
+        normalizeCellValueMode(cell?.valueMode),
+      );
+    }),
   );
+
   for (const m of masters) {
-    headerCells[m.r][m.c] = {
+    out[m.r][m.c] = {
       text: m.text,
       colSpan: m.cs,
       rowSpan: m.rs,
@@ -691,7 +795,7 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
     for (let rr = m.r; rr < m.r + m.rs; rr++) {
       for (let cc = m.c; cc < m.c + m.cs; cc++) {
         if (rr === m.r && cc === m.c) continue;
-        headerCells[rr][cc] = {
+        out[rr][cc] = {
           text: "",
           colSpan: 1,
           rowSpan: 1,
@@ -701,10 +805,15 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
       }
     }
   }
+  return out;
+}
+
+function sanitizeMerges(data: PdfTableData): PdfTableData {
+  const d = normalizeTableData(data);
   return {
     ...d,
-    headerCells,
-    bodyCells: d.bodyCells.map(r => r.map(c => ({ ...c }))),
+    headerCells: sanitizeGridMerges(d.headerCells, d.headerRows, d.cols),
+    bodyCells: sanitizeGridMerges(d.bodyCells, d.bodyRows, d.cols),
     colWidths: [...d.colWidths],
   };
 }

@@ -31,6 +31,7 @@ export type CustomPdfTableProps = {
   showValueModeMenu?: boolean;
   selection?: PdfTableSelection | null;
   onSelectHeaderCell?: (row: number, col: number, shiftKey: boolean) => void;
+  onSelectBodyCell?: (row: number, col: number, shiftKey: boolean) => void;
   onChangeHeaderCell?: (row: number, col: number, patch: Partial<PdfTableCell>) => void;
   onChangeBodyCell?: (row: number, col: number, patch: Partial<PdfTableCell>) => void;
   /** Results: overlay values keyed by bodyCellKey / headerCellKey — only dynamic cells */
@@ -155,6 +156,7 @@ export function CustomPdfTable({
   onSelectHeaderCell,
   onChangeHeaderCell,
   onChangeBodyCell,
+  onSelectBodyCell,
   fillValues,
   onFillChange,
   readOnly = false,
@@ -288,16 +290,17 @@ export function CustomPdfTable({
               const menuKey = `h:${ri}:${ci}`;
 
               if (editableHeader) {
-                const highlighted = selection
-                  ? (() => {
-                      for (let r = ri; r < ri + rs; r++) {
-                        for (let c = ci; c < ci + cs; c++) {
-                          if (isInSelection(r, c, selection)) return true;
+                const highlighted =
+                  selection?.section === "header"
+                    ? (() => {
+                        for (let r = ri; r < ri + rs; r++) {
+                          for (let c = ci; c < ci + cs; c++) {
+                            if (isInSelection(r, c, selection)) return true;
+                          }
                         }
-                      }
-                      return false;
-                    })()
-                  : false;
+                        return false;
+                      })()
+                    : false;
 
                 return (
                   <th
@@ -423,18 +426,42 @@ export function CustomPdfTable({
           grid.bodyCells.map((row, ri) => (
             <tr key={`b-${ri}`}>
               {row.map((cell, ci) => {
+                if (cell.covered) return null;
+                const cs = cell.colSpan ?? 1;
+                const rs = cell.rowSpan ?? 1;
                 const dynamic = isDynamicCell(cell);
                 const menuKey = `b:${ri}:${ci}`;
 
                 if (editableBody) {
-                  // Template: static text editable here; dynamic content filled on Results
+                  const highlighted =
+                    selection?.section === "body"
+                      ? (() => {
+                          for (let r = ri; r < ri + rs; r++) {
+                            for (let c = ci; c < ci + cs; c++) {
+                              if (isInSelection(r, c, selection)) return true;
+                            }
+                          }
+                          return false;
+                        })()
+                      : false;
+
                   return (
                     <td
                       key={ci}
+                      colSpan={cs}
+                      rowSpan={rs}
                       style={cellBorderStyle}
                       className={`${cellBorder} ${pad} text-center p-0 relative ${
-                        dynamic ? "bg-amber-50/50" : ""
+                        highlighted
+                          ? "outline outline-2 outline-offset-[-2px] outline-sky-500 bg-sky-100"
+                          : dynamic
+                            ? "bg-amber-50/50"
+                            : ""
                       }`}
+                      onMouseDown={e => {
+                        e.stopPropagation();
+                        onSelectBodyCell?.(ri, ci, e.shiftKey);
+                      }}
                       onPointerDown={e => e.stopPropagation()}
                     >
                       <div className="flex items-stretch min-h-full">
@@ -443,6 +470,10 @@ export function CustomPdfTable({
                             value={cell.text}
                             readOnly
                             tabIndex={-1}
+                            onMouseDown={e => {
+                              e.stopPropagation();
+                              onSelectBodyCell?.(ri, ci, e.shiftKey);
+                            }}
                             onClick={e => e.stopPropagation()}
                             className={`${inputCls} px-1 flex-1 min-w-0 text-slate-400 cursor-default`}
                             placeholder="Natijada to'ldiriladi..."
@@ -452,6 +483,10 @@ export function CustomPdfTable({
                           <input
                             value={cell.text}
                             onChange={e => onChangeBodyCell?.(ri, ci, { text: e.target.value })}
+                            onMouseDown={e => {
+                              e.stopPropagation();
+                              onSelectBodyCell?.(ri, ci, e.shiftKey);
+                            }}
                             onClick={e => e.stopPropagation()}
                             className={`${inputCls} px-1 flex-1 min-w-0`}
                             placeholder="..."
@@ -461,7 +496,7 @@ export function CustomPdfTable({
                           onChangeBodyCell?.(ri, ci, { valueMode }),
                         )}
                       </div>
-                      {ri === 0 ? colResizeHandle(ci, 1) : null}
+                      {ri === 0 ? colResizeHandle(ci, cs) : null}
                     </td>
                   );
                 }
@@ -474,6 +509,8 @@ export function CustomPdfTable({
                       return (
                         <td
                           key={ci}
+                          colSpan={cs}
+                          rowSpan={rs}
                           style={cellBorderStyle}
                           className={`${cellBorder} ${pad} text-center`}
                         >
@@ -482,7 +519,12 @@ export function CustomPdfTable({
                       );
                     }
                     return (
-                      <td key={ci} className={`${cellBorder} ${pad} text-center p-0`}>
+                      <td
+                        key={ci}
+                        colSpan={cs}
+                        rowSpan={rs}
+                        className={`${cellBorder} ${pad} text-center p-0`}
+                      >
                         <input
                           value={value}
                           onChange={e => onFillChange?.(key, e.target.value)}
@@ -495,10 +537,11 @@ export function CustomPdfTable({
                     );
                   }
 
-                  // static — locked on Results
                   return (
                     <td
                       key={ci}
+                      colSpan={cs}
+                      rowSpan={rs}
                       style={cellBorderStyle}
                       className={`${cellBorder} ${pad} text-center`}
                     >
@@ -510,6 +553,8 @@ export function CustomPdfTable({
                 return (
                   <td
                     key={ci}
+                    colSpan={cs}
+                    rowSpan={rs}
                     style={cellBorderStyle}
                     className={`${cellBorder} ${pad} text-center`}
                   >

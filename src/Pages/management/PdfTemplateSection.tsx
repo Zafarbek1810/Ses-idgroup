@@ -25,6 +25,7 @@ import {
   getActiveTemplateId,
   getDynamicFieldDef,
   loadPdfTemplates,
+  mergeBodySelection,
   mergeHeaderSelection,
   normalizeSelection,
   normalizeTableData,
@@ -34,6 +35,7 @@ import {
   setActiveTemplateId,
   setColWidthAt,
   tableHeightForRows,
+  unmergeBodySelection,
   unmergeHeaderSelection,
   updateBodyCell,
   updateColWidths,
@@ -46,6 +48,7 @@ import {
   type PdfTableSelection,
   type PdfTemplate,
   type PdfTextStyle,
+  type PdfTableCell,
 } from "@/lib/pdfTemplate";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
@@ -276,13 +279,17 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     });
   };
 
-  const handleSelectHeaderCell = (row: number, col: number, shiftKey: boolean) => {
+  const handleSelectCell = (
+    section: "header" | "body",
+    row: number,
+    col: number,
+    shiftKey: boolean,
+  ) => {
     setTableSel(prev => {
-      if (shiftKey && prev) {
-        // Keep original anchor (r1,c1); only move the focus corner
-        return { r1: prev.r1, c1: prev.c1, r2: row, c2: col };
+      if (shiftKey && prev && prev.section === section) {
+        return { section, r1: prev.r1, c1: prev.c1, r2: row, c2: col };
       }
-      return { r1: row, c1: col, r2: row, c2: col };
+      return { section, r1: row, c1: col, r2: row, c2: col };
     });
   };
 
@@ -587,7 +594,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                     analyses={analyses}
                     primaryColor={primaryColor}
                     selection={tableSel}
-                    onSelectCell={handleSelectHeaderCell}
+                    onSelectCell={handleSelectCell}
                     onClearSelection={() => setTableSel(null)}
                     onUpdate={patch => {
                       const td = normalizeTableData(patch.tableData ?? selected.tableData);
@@ -727,7 +734,11 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                   onSelect={() => selectElement(el.id)}
                   onSelectHeaderCell={(row, col, shiftKey) => {
                     selectElement(el.id, { keepTableSel: true });
-                    handleSelectHeaderCell(row, col, shiftKey);
+                    handleSelectCell("header", row, col, shiftKey);
+                  }}
+                  onSelectBodyCell={(row, col, shiftKey) => {
+                    selectElement(el.id, { keepTableSel: true });
+                    handleSelectCell("body", row, col, shiftKey);
                   }}
                   onTableDataChange={data => {
                     const td = normalizeTableData(data);
@@ -796,29 +807,63 @@ function FreeTableBuilder({
   analyses: Analysis[];
   primaryColor: string;
   selection: PdfTableSelection | null;
-  onSelectCell: (row: number, col: number, shiftKey: boolean) => void;
+  onSelectCell: (
+    section: "header" | "body",
+    row: number,
+    col: number,
+    shiftKey: boolean,
+  ) => void;
   onClearSelection: () => void;
   onUpdate: (patch: Partial<PdfElement>) => void;
   onTableData: (data: PdfTableData) => void;
 }) {
   const data = normalizeTableData(selected.tableData);
   const bounds = selection ? normalizeSelection(selection) : null;
+  const section = bounds?.section ?? "header";
+  const grid = section === "body" ? data.bodyCells : data.headerCells;
   const active =
     bounds &&
     bounds.r1 === bounds.r2 &&
     bounds.c1 === bounds.c2 &&
-    !data.headerCells[bounds.r1]?.[bounds.c1]?.covered
+    !grid[bounds.r1]?.[bounds.c1]?.covered
       ? { row: bounds.r1, col: bounds.c1 }
       : bounds
         ? { row: bounds.r1, col: bounds.c1 }
         : null;
   const activeCell =
-    active && !data.headerCells[active.row]?.[active.col]?.covered
-      ? data.headerCells[active.row][active.col]
+    active && !grid[active.row]?.[active.col]?.covered
+      ? grid[active.row][active.col]
       : null;
   const canMerge = Boolean(
     bounds && (bounds.r1 !== bounds.r2 || bounds.c1 !== bounds.c2),
   );
+
+  const applyMerge = () => {
+    if (!bounds) return;
+    onTableData(
+      bounds.section === "body"
+        ? mergeBodySelection(data, bounds)
+        : mergeHeaderSelection(data, bounds),
+    );
+  };
+
+  const applyUnmerge = () => {
+    if (!bounds) return;
+    onTableData(
+      bounds.section === "body"
+        ? unmergeBodySelection(data, bounds)
+        : unmergeHeaderSelection(data, bounds),
+    );
+  };
+
+  const patchActiveCell = (patch: Partial<PdfTableCell>) => {
+    if (!active || !bounds) return;
+    onTableData(
+      bounds.section === "body"
+        ? updateBodyCell(data, active.row, active.col, patch)
+        : updateHeaderCell(data, active.row, active.col, patch),
+    );
+  };
 
   return (
     <div className="space-y-3">
@@ -965,37 +1010,32 @@ function FreeTableBuilder({
         <button
           type="button"
           disabled={!canMerge}
-          onClick={() => {
-            if (!bounds) return;
-            onTableData(mergeHeaderSelection(data, bounds));
-          }}
+          onClick={applyMerge}
           className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[11px] font-semibold disabled:opacity-40 hover:bg-secondary"
           style={canMerge ? { borderColor: primaryColor, color: primaryColor } : undefined}
         >
-          <Combine className="w-3.5 h-3.5" /> Header birlashtirish
+          <Combine className="w-3.5 h-3.5" /> Birlashtirish
         </button>
         <button
           type="button"
           disabled={!selection}
-          onClick={() => {
-            if (!bounds) return;
-            onTableData(unmergeHeaderSelection(data, bounds));
-          }}
+          onClick={applyUnmerge}
           className="flex-1 py-2 rounded-xl border border-border text-[11px] font-semibold disabled:opacity-40 hover:bg-secondary"
         >
           Ajratish
         </button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Header katakni tanlang, <kbd className="px-1 rounded bg-secondary">Shift</kbd>+bosib
-        diapazonni kengaytiring, so&apos;ng Birlashtirish.
+        Header yoki body katakni tanlang, <kbd className="px-1 rounded bg-secondary">Shift</kbd>
+        +bosib diapazonni kengaytiring, so&apos;ng Birlashtirish.
       </p>
 
-      {activeCell && active && (
+      {activeCell && active && bounds && (
         <div className="rounded-xl border border-border bg-secondary/50 p-3 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <p className="text-[11px] font-semibold text-foreground">
-              Header katak [{active.row + 1}, {active.col + 1}]
+              {bounds.section === "body" ? "Body" : "Header"} katak [{active.row + 1},{" "}
+              {active.col + 1}]
               {(activeCell.colSpan ?? 1) > 1 || (activeCell.rowSpan ?? 1) > 1
                 ? ` · ${activeCell.rowSpan ?? 1}×${activeCell.colSpan ?? 1}`
                 : ""}
@@ -1011,11 +1051,7 @@ function FreeTableBuilder({
           <div className="flex gap-1.5">
             <button
               type="button"
-              onClick={() =>
-                onTableData(
-                  updateHeaderCell(data, active.row, active.col, { valueMode: "static" }),
-                )
-              }
+              onClick={() => patchActiveCell({ valueMode: "static" })}
               className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold border ${
                 (activeCell.valueMode ?? "static") !== "dynamic"
                   ? "border-foreground/30 bg-card text-foreground"
@@ -1026,11 +1062,7 @@ function FreeTableBuilder({
             </button>
             <button
               type="button"
-              onClick={() =>
-                onTableData(
-                  updateHeaderCell(data, active.row, active.col, { valueMode: "dynamic" }),
-                )
-              }
+              onClick={() => patchActiveCell({ valueMode: "dynamic" })}
               className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold border ${
                 activeCell.valueMode === "dynamic"
                   ? "border-amber-500/50 bg-amber-50 text-amber-800"
@@ -1043,13 +1075,9 @@ function FreeTableBuilder({
           {(activeCell.valueMode ?? "static") !== "dynamic" ? (
             <input
               value={activeCell.text}
-              onChange={e =>
-                onTableData(
-                  updateHeaderCell(data, active.row, active.col, { text: e.target.value }),
-                )
-              }
-              onFocus={() => onSelectCell(active.row, active.col, false)}
-              placeholder="Sarlavha matni..."
+              onChange={e => patchActiveCell({ text: e.target.value })}
+              onFocus={() => onSelectCell(bounds.section, active.row, active.col, false)}
+              placeholder="Katak matni..."
               className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
             />
           ) : (
@@ -1082,6 +1110,7 @@ function CanvasElement({
   tableSel,
   onSelect,
   onSelectHeaderCell,
+  onSelectBodyCell,
   onTableDataChange,
   onStartEdit,
   onContentChange,
@@ -1097,6 +1126,7 @@ function CanvasElement({
   tableSel: PdfTableSelection | null;
   onSelect: () => void;
   onSelectHeaderCell: (row: number, col: number, shiftKey: boolean) => void;
+  onSelectBodyCell: (row: number, col: number, shiftKey: boolean) => void;
   onTableDataChange: (data: PdfTableData) => void;
   onStartEdit: () => void;
   onContentChange: (content: string) => void;
@@ -1296,6 +1326,9 @@ function CanvasElement({
             selection={tableSel}
             onSelectHeaderCell={(row, col, shiftKey) => {
               onSelectHeaderCell(row, col, shiftKey);
+            }}
+            onSelectBodyCell={(row, col, shiftKey) => {
+              onSelectBodyCell(row, col, shiftKey);
             }}
             onChangeHeaderCell={(row, col, patch) => {
               onTableDataChange(

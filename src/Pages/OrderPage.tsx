@@ -1,8 +1,8 @@
 import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeft, Loader2, AlertCircle, Plus, X, CheckCircle,
-  FlaskConical, MessageSquare, Search, UserPlus, Printer,
+  ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
+  FlaskConical, MessageSquare, Search, UserPlus, Printer, ClipboardList,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -12,6 +12,20 @@ import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
+
+function formatBirthDay(value: string | undefined): string {
+  if (!value) return "—";
+  const d = value.slice(0, 10);
+  const [y, m, day] = d.split("-");
+  if (!y || !m || !day) return d;
+  return `${day}.${m}.${y}`;
+}
+
+function sexLabel(sex: number | undefined): string {
+  if (sex === 1) return "Erkak";
+  if (sex === 2) return "Ayol";
+  return "—";
+}
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" | "info" };
 
@@ -567,7 +581,7 @@ export function OrderPage({
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod | null>(null);
   const [paymentPickerOpen, setPaymentPickerOpen] = useState(false);
   const [discountPercent, setDiscountPercent] = useState("");
-  const [sendSms, setSendSms] = useState(false);
+  const [sendSms, setSendSms] = useState(true);
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -587,7 +601,7 @@ export function OrderPage({
     setPaymentMethod(null);
     setPaymentPickerOpen(false);
     setDiscountPercent("");
-    setSendSms(false);
+    setSendSms(true);
     setAnalysisModalOpen(false);
     setPaymentModalOpen(false);
     setReceiptOpen(false);
@@ -651,31 +665,39 @@ export function OrderPage({
     return () => { cancelled = true; };
   }, []);
 
-  const handleSearchPatients = async () => {
-    const q = patientSearch.trim();
-    if (!q) {
-      pushToast("Qidiruv uchun matn kiriting", "info");
-      return;
-    }
+  const loadPatients = async (search?: string) => {
     setSearchingPatients(true);
     setPatientSearched(true);
     try {
-      const res = await getPatientsFull({ page: 1, limit: 20, search: q });
+      const q = search?.trim() ?? "";
+      const res = await getPatientsFull({
+        page: 1,
+        limit: 50,
+        ...(q ? { search: q } : {}),
+      });
       setPatientMatches(res.data);
-      if (res.data.length === 0) pushToast("Bemor topilmadi", "info");
+      if (q && res.data.length === 0) pushToast("Bemor topilmadi", "info");
     } catch (err) {
-      pushToast(err instanceof ApiError ? err.message : "Qidiruv muvaffaqiyatsiz", "error");
+      pushToast(err instanceof ApiError ? err.message : "Bemorlarni yuklab bo'lmadi", "error");
       setPatientMatches([]);
     } finally {
       setSearchingPatients(false);
     }
   };
 
+  const handleSearchPatients = async () => {
+    await loadPatients(patientSearch);
+  };
+
+  useEffect(() => {
+    if (patientId != null) return;
+    void loadPatients();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial list when opening kassa without patient
+  }, [patientId]);
+
   const clearPatient = () => {
     onPatientChange(null);
-    setPatientMatches([]);
     setPatientSearch("");
-    setPatientSearched(false);
   };
 
   const existingKeys = useMemo(
@@ -870,9 +892,9 @@ export function OrderPage({
               <Search className="w-4 h-4" style={{ color: primaryColor }} />
             </div>
             <div>
-              <h3 className="text-[15px] font-semibold text-foreground">Bemor tanlash</h3>
+              <h3 className="text-[15px] font-semibold text-foreground">Bemorlar ro&apos;yxati</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Order yaratish uchun bemorni qidiring yoki Bemorlar sahifasidan tanlang
+                Jadvaldan bemorni tanlang yoki qidiruv orqali toping
               </p>
             </div>
           </div>
@@ -907,37 +929,124 @@ export function OrderPage({
                 Qidirish
               </button>
             </div>
+          </div>
 
-            {patientSearched && patientMatches.length === 0 && !searchingPatients && (
-              <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
-                <UserPlus className="w-8 h-8 mx-auto text-muted-foreground mb-2" />
-                <p className="text-sm text-foreground font-medium">Bemor topilmadi</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Bemorlar sahifasidan yangi bemor qo&apos;shishingiz mumkin
-                </p>
-              </div>
-            )}
-
-            {patientMatches.length > 0 && (
-              <div className="border border-border rounded-xl overflow-hidden divide-y divide-border">
-                {patientMatches.map(p => (
-                  <button
-                    key={p.id}
-                    type="button"
-                    onClick={() => onPatientChange(p.id)}
-                    className="w-full text-left px-4 py-3 hover:bg-secondary/50 transition-colors"
-                  >
-                    <p className="text-[13px] font-semibold text-foreground">
-                      {p.last_name} {p.first_name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {p.passport_number} · {p.phone}
-                      {p.district?.name ? ` · ${p.district.name}` : ""}
-                    </p>
-                  </button>
-                ))}
-              </div>
-            )}
+          <div className="overflow-x-auto ses-scrollbar border-t border-border">
+            <table className="w-full min-w-[900px] text-left">
+              <thead>
+                <tr className="border-b border-border bg-secondary/40">
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    ID
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Bemor
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Passport
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Telefon
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Tug&apos;ilgan sana
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Jinsi
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Tuman
+                  </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground text-right">
+                    Amal
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {searchingPatients ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-16 text-center">
+                      <Loader2 className="w-7 h-7 animate-spin mx-auto" style={{ color: primaryColor }} />
+                      <p className="text-sm text-muted-foreground mt-3">Yuklanmoqda...</p>
+                    </td>
+                  </tr>
+                ) : patientMatches.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-16 text-center">
+                      {patientSearched ? (
+                        <>
+                          <UserPlus className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                          <p className="text-sm font-medium text-foreground">Bemor topilmadi</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Bemorlar sahifasidan yangi bemor qo&apos;shishingiz mumkin
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <ClipboardList className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
+                          <p className="text-sm font-medium text-foreground">Bemorlar ro&apos;yxati</p>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Qidiruv orqali bemorni toping
+                          </p>
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                ) : (
+                  patientMatches.map(p => (
+                    <tr
+                      key={p.id}
+                      className="border-b border-border hover:bg-secondary/30 transition-colors group cursor-pointer"
+                      onClick={() => onPatientChange(p.id)}
+                    >
+                      <td className="px-4 py-3 text-[13px] font-mono text-muted-foreground">
+                        #{p.id}
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="text-[13px] font-semibold text-foreground">
+                          {p.last_name} {p.first_name}
+                        </p>
+                        {p.village || p.street ? (
+                          <p className="text-[11px] text-muted-foreground mt-0.5 truncate max-w-[220px]">
+                            {[p.village, p.street].filter(Boolean).join(", ")}
+                          </p>
+                        ) : null}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] font-mono text-foreground">
+                        {p.passport_number || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-foreground whitespace-nowrap">
+                        {p.phone || "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-muted-foreground whitespace-nowrap">
+                        {formatBirthDay(p.birth_day)}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-foreground">
+                        {sexLabel(p.sex)}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-muted-foreground">
+                        {p.district?.name ?? "—"}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end">
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation();
+                              onPatientChange(p.id);
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold text-white transition-all hover:opacity-90 opacity-90 group-hover:opacity-100"
+                            style={{ background: primaryColor }}
+                          >
+                            Tanlash
+                            <ArrowRight className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
       ) : loading ? (

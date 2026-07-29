@@ -23,6 +23,11 @@ export type LaboratoryPayload = {
   name: string;
 };
 
+export type LaboratoryUpdatePayload = {
+  name?: string;
+  lab_director_id?: number | null;
+};
+
 export type LaboratoriesFullParams = {
   page?: number;
   limit?: number;
@@ -114,7 +119,7 @@ export function addLaboratory(payload: LaboratoryPayload) {
   });
 }
 
-export function updateLaboratory(id: number, payload: LaboratoryPayload) {
+export function updateLaboratory(id: number, payload: LaboratoryUpdatePayload) {
   return apiRequest<Laboratory>(`/laboratory/update/${id}`, {
     method: "PATCH",
     body: payload,

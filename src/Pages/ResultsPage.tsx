@@ -16,7 +16,6 @@ import {
   type OrderItem,
   type OrderPatient,
 } from "@/api/order";
-import { getAllPatterns, resolvePatternAnalysisId, type Pattern } from "@/api/pattern";
 import {
   addResult,
   buildResultItemFromGrid,
@@ -43,6 +42,8 @@ import {
   bodyCellKey,
   formatDynamicDisplay,
   getActivePdfTemplate,
+  headerCellKey,
+  isDynamicCell,
   loadPdfTemplates,
   normalizeTableData,
   type PdfDynamicContext,
@@ -196,9 +197,41 @@ function resolveTemplateForAnalysis(analysisId: number, analysisName: string): P
   return bindTemplateToAnalysis(base, analysisId, analysisName);
 }
 
+/** Seed fill map from dynamic cells only; saved values win when present */
+function seedFillFromTemplate(
+  tpl: PdfTemplate | null,
+  saved: Record<string, string> = {},
+): Record<string, string> {
+  const table = tpl?.elements.find(el => el.type === "table");
+  const grid = normalizeTableData(table?.tableData);
+  const next: Record<string, string> = {};
+
+  for (let r = 0; r < grid.headerRows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      const cell = grid.headerCells[r][c];
+      if (cell.covered || !isDynamicCell(cell)) continue;
+      const key = headerCellKey(r, c);
+      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
+        ? String(saved[key] ?? "")
+        : "";
+    }
+  }
+
+  for (let r = 0; r < grid.bodyRows; r++) {
+    for (let c = 0; c < grid.cols; c++) {
+      const cell = grid.bodyCells[r][c];
+      if (!isDynamicCell(cell)) continue;
+      const key = bodyCellKey(r, c);
+      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
+        ? String(saved[key] ?? "")
+        : "";
+    }
+  }
+  return next;
+}
+
 export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [rows, setRows] = useState<OrderAnalysisRow[]>([]);
-  const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [resultsCache, setResultsCache] = useState<ResultRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -206,7 +239,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [selected, setSelected] = useState<OrderAnalysisRow | null>(null);
   const [template, setTemplate] = useState<PdfTemplate | null>(null);
   const [availableTemplates, setAvailableTemplates] = useState<PdfTemplate[]>([]);
-  const [bodyPatterns, setBodyPatterns] = useState<Pattern[]>([]);
   const [fillValues, setFillValues] = useState<Record<string, string>>({});
   const [dynamicCtx, setDynamicCtx] = useState<PdfDynamicContext | null>(null);
   const [saving, setSaving] = useState(false);
@@ -225,9 +257,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const load = async () => {
     setLoading(true);
     try {
-      const [ordersRaw, p, results] = await Promise.all([
+      const [ordersRaw, results] = await Promise.all([
         getAllOrders(),
-        getAllPatterns().catch(() => [] as Pattern[]),
         getAllResults().catch(() => [] as ResultRecord[]),
       ]);
       const orders = Array.isArray(ordersRaw)
@@ -235,7 +266,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         : ((ordersRaw as { data?: Order[]; orders?: Order[] })?.data ??
           (ordersRaw as { orders?: Order[] })?.orders ??
           []);
-      setPatterns(p);
       setResultsCache(results);
       setRows(flattenOrderAnalyses(orders, results));
     } catch (err) {
@@ -284,16 +314,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         /* optional */
       }
 
-      let allPatterns = patterns;
-      try {
-        allPatterns = await getAllPatterns();
-        setPatterns(allPatterns);
-      } catch {
-        /* cached */
-      }
-      const related = allPatterns.filter(p => resolvePatternAnalysisId(p) === row.analysisId);
-      setBodyPatterns(related);
-
       let resultRec: ResultRecord | null = null;
       let savedItems: ReturnType<typeof getResultItems> = [];
       const cachedRec = findResultByOrderId(resultsCache, row.orderId);
@@ -321,11 +341,12 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       }
 
       setDynamicCtx(buildDynamicContext(row, order, resultRec));
-      setFillValues(decodeGridFillFromItems(savedItems, row.analysisId));
+      const saved = decodeGridFillFromItems(savedItems, row.analysisId);
+      setFillValues(seedFillFromTemplate(tpl, saved));
 
-      if (related.length === 0) {
+      if (!tpl?.elements.some(el => el.type === "table")) {
         pushToast(
-          `Analiz #${row.analysisId} uchun pattern topilmadi. Boshqaruv → Analiz shablonlarida yarating.`,
+          "PDF jadval shabloni topilmadi. Boshqaruv → PDF shablonida yarating.",
           "error",
         );
       }
@@ -338,7 +359,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setSelected(null);
     setTemplate(null);
     setAvailableTemplates([]);
-    setBodyPatterns([]);
     setFillValues({});
     setDynamicCtx(null);
     setPdfZoom(PDF_ZOOM_DEFAULT);
@@ -354,11 +374,12 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     if (!selected) return;
     const base = availableTemplates.find(t => t.id === templateId);
     if (!base) return;
-    setTemplate(bindTemplateToAnalysis(base, selected.analysisId, selected.analysisName));
+    const next = bindTemplateToAnalysis(base, selected.analysisId, selected.analysisName);
+    setTemplate(next);
+    setFillValues(prev => seedFillFromTemplate(next, prev));
   };
 
-  const updateFill = (patternId: number | string, col: number, value: string) => {
-    const key = bodyCellKey(patternId, col);
+  const updateFill = (key: string, value: string) => {
     setFillValues(prev => ({ ...prev, [key]: value }));
   };
 
@@ -551,10 +572,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const hasTable = Boolean(template?.elements.some(el => el.type === "table"));
     const tableEl = template?.elements.find(el => el.type === "table");
     const grid = normalizeTableData(tableEl?.tableData);
-    const inputCols = Math.max(0, grid.cols - 1);
     const previewPageHeight = Math.max(
       A4_PREVIEW_HEIGHT,
-      A4_PREVIEW_HEIGHT + Math.max(0, bodyPatterns.length - 8) * 18 + grid.headerRows * 8,
+      A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
     );
 
     return (
@@ -656,8 +676,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               <div>
                 <h3 className="text-[13px] font-semibold text-foreground">{template.name}</h3>
                 <p className="text-[11px] text-muted-foreground">
-                  Header {grid.headerRows} qator · {grid.cols} ustun · Patternlar:{" "}
-                  {bodyPatterns.length} · Input ustunlar: {inputCols}
+                  Header {grid.headerRows} · Body {grid.bodyRows} · {grid.cols} ustun
                 </p>
               </div>
               <div className="flex items-center gap-2">
@@ -714,7 +733,6 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                   <ResultPdfCanvas
                     ref={pdfRef}
                     template={template}
-                    patterns={bodyPatterns}
                     fillValues={fillValues}
                     dynamicCtx={dynamicCtx}
                     onFillChange={updateFill}
@@ -841,21 +859,20 @@ const ResultPdfCanvas = React.forwardRef<
   HTMLDivElement,
   {
     template: PdfTemplate;
-    patterns: Pattern[];
     fillValues: Record<string, string>;
     dynamicCtx: PdfDynamicContext | null;
-    onFillChange: (patternId: number | string, col: number, value: string) => void;
+    onFillChange: (key: string, value: string) => void;
     readOnly?: boolean;
   }
 >(function ResultPdfCanvas(
-  { template, patterns, fillValues, dynamicCtx, onFillChange, readOnly = false },
+  { template, fillValues, dynamicCtx, onFillChange, readOnly = false },
   ref,
 ) {
   const tableEl = template.elements.find(el => el.type === "table");
   const grid = normalizeTableData(tableEl?.tableData);
   const pageHeight = Math.max(
     A4_PREVIEW_HEIGHT,
-    A4_PREVIEW_HEIGHT + Math.max(0, patterns.length - 8) * 18 + grid.headerRows * 8,
+    A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
   );
   // Exact A4 aspect when content fits one page (avoids blank 2nd PDF page)
   const a4PreviewHeight = Math.round((A4_PREVIEW_WIDTH * A4_HEIGHT) / A4_WIDTH);
@@ -872,7 +889,6 @@ const ResultPdfCanvas = React.forwardRef<
         <FillableElement
           key={el.id}
           element={el}
-          patterns={patterns}
           fillValues={fillValues}
           dynamicCtx={dynamicCtx}
           onFillChange={onFillChange}
@@ -885,17 +901,15 @@ const ResultPdfCanvas = React.forwardRef<
 
 function FillableElement({
   element,
-  patterns,
   fillValues,
   dynamicCtx,
   onFillChange,
   readOnly = false,
 }: {
   element: PdfElement;
-  patterns: Pattern[];
   fillValues: Record<string, string>;
   dynamicCtx: PdfDynamicContext | null;
-  onFillChange: (patternId: number | string, col: number, value: string) => void;
+  onFillChange: (key: string, value: string) => void;
   readOnly?: boolean;
 }) {
   const isTable = element.type === "table";
@@ -940,7 +954,6 @@ function FillableElement({
         <div className="w-full bg-white" style={{ pointerEvents: readOnly ? "none" : "auto" }}>
           <CustomPdfTable
             data={normalizeTableData(element.tableData)}
-            patterns={patterns.map(p => ({ id: p.id, name: p.name }))}
             fillValues={fillValues}
             onFillChange={onFillChange}
             readOnly={readOnly}

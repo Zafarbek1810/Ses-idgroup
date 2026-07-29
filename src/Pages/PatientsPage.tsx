@@ -122,10 +122,15 @@ function patientToForm(p: Patient, regions: Region[]): PatientForm {
   };
 }
 
+function filterPhoneValue(phone: string): string {
+  const formatted = formatPhoneNumber(phone || PHONE_PREFIX);
+  return formatted === PHONE_PREFIX ? "" : formatted;
+}
+
 function matchesFilter(p: Patient, filter: FilterForm): boolean {
   const fn = filter.first_name.trim().toLowerCase();
   const ln = filter.last_name.trim().toLowerCase();
-  const phone = filter.phone.trim().toLowerCase();
+  const phone = filterPhoneValue(filter.phone).toLowerCase();
   const passport = filter.passport_number.trim().toLowerCase();
   const birth = filter.birth_day.trim();
 
@@ -140,7 +145,7 @@ function matchesFilter(p: Patient, filter: FilterForm): boolean {
 function buildSearchQuery(filter: FilterForm): string {
   return [
     filter.passport_number,
-    filter.phone,
+    filterPhoneValue(filter.phone),
     filter.first_name,
     filter.last_name,
     filter.birth_day,
@@ -249,7 +254,12 @@ export function PatientsPage({
   };
 
   const handleSearch = async () => {
-    const hasAny = Object.values(filter).some(v => v.trim());
+    const hasAny =
+      Boolean(filter.first_name.trim()) ||
+      Boolean(filter.last_name.trim()) ||
+      Boolean(filter.birth_day.trim()) ||
+      Boolean(filter.passport_number.trim()) ||
+      Boolean(filterPhoneValue(filter.phone));
     if (!hasAny) {
       pushToast("Qidiruv uchun kamida bitta maydonni to'ldiring", "info");
       return;
@@ -455,7 +465,7 @@ export function PatientsPage({
             void handleSearch();
           }}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
             <Field label="Ism">
               <input
                 type="text"
@@ -484,10 +494,35 @@ export function PatientsPage({
             </Field>
             <Field label="Telefon">
               <input
-                type="text"
-                value={filter.phone}
+                type="tel"
+                value={filter.phone || PHONE_PREFIX}
                 placeholder="+998901234567"
-                onChange={e => setFilterField("phone", e.target.value)}
+                maxLength={13}
+                inputMode="numeric"
+                autoComplete="tel"
+                onChange={e => setFilterField("phone", formatPhoneNumber(e.target.value))}
+                onFocus={e => {
+                  if (!filter.phone || filter.phone === PHONE_PREFIX) {
+                    setFilterField("phone", PHONE_PREFIX);
+                  }
+                  requestAnimationFrame(() => {
+                    const el = e.target;
+                    if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                      el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                    }
+                  });
+                }}
+                onKeyDown={e => {
+                  const input = e.currentTarget;
+                  const start = input.selectionStart ?? 0;
+                  const end = input.selectionEnd ?? 0;
+                  const touchingPrefix =
+                    start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                  if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
+                    e.preventDefault();
+                    input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                  }
+                }}
                 className={inputCls()}
               />
             </Field>
@@ -496,13 +531,14 @@ export function PatientsPage({
                 type="text"
                 value={filter.passport_number}
                 placeholder="AA1234567"
-                onChange={e => setFilterField("passport_number", e.target.value)}
+                maxLength={9}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                onChange={e => setFilterField("passport_number", formatPassportNumber(e.target.value))}
                 className={inputCls()}
               />
             </Field>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-3 mt-4">
             <button
               type="submit"
               disabled={searching}
@@ -512,6 +548,9 @@ export function PatientsPage({
               {searching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
               Qidirish
             </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3 mt-4">
 
             {selectedPatientId != null && (
               <span

@@ -15,7 +15,7 @@ const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "users", label: "Foydalanuvchilar", icon: Users },
   { id: "laboratories", label: "Laboratoriyalar", icon: FlaskConical },
   { id: "analyses", label: "Analizlar", icon: TestTube2 },
-  { id: "patterns", label: "Analiz shablonlari", icon: LayoutTemplate },
+  // { id: "patterns", label: "Analiz shablonlari", icon: LayoutTemplate },
   { id: "pdf", label: "PDF shablon", icon: FileType },
 ];
 

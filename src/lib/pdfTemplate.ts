@@ -175,20 +175,41 @@ export function resolveDynamicValue(
   }
 }
 
-/** One cell in the editable table header */
+/** One cell in the editable table */
+export type PdfCellValueMode = "static" | "dynamic";
+
 export type PdfTableCell = {
   text: string;
   colSpan?: number;
   rowSpan?: number;
   /** Hidden — covered by another cell's span */
   covered?: boolean;
+  /**
+   * static — faqat PDF shablon sahifasida tahrirlanadi
+   * dynamic — Natijalar sahifasida to'ldiriladi / o'zgartiriladi
+   */
+  valueMode?: PdfCellValueMode;
 };
 
-/** Header-only table config; body rows come from analysis patterns */
+export function normalizeCellValueMode(
+  mode: PdfCellValueMode | null | undefined,
+): PdfCellValueMode {
+  return mode === "dynamic" ? "dynamic" : "static";
+}
+
+export function isDynamicCell(cell: Pick<PdfTableCell, "valueMode"> | null | undefined) {
+  return normalizeCellValueMode(cell?.valueMode) === "dynamic";
+}
+
+/** Full editable table: header + body (manual), optional per-column widths */
 export type PdfTableData = {
   cols: number;
   headerRows: number;
   headerCells: PdfTableCell[][];
+  bodyRows: number;
+  bodyCells: PdfTableCell[][];
+  /** Relative column widths in %; length === cols; sum ≈ 100 */
+  colWidths: number[];
 };
 
 /** Rectangular selection in the header (Excel-like) */
@@ -208,10 +229,10 @@ export type PdfElement = {
   height: number;
   content: string;
   imageSrc?: string;
-  /** Required for body patterns */
+  /** Bind template table to an analysis (Results page matching) */
   analysisId?: number | null;
   analysisName?: string;
-  /** Header grid drawn by user */
+  /** Header + body grid drawn by user */
   tableData?: PdfTableData;
   dynamicKey?: PdfDynamicFieldKey | null;
   showDynamicLabel?: boolean;
@@ -240,28 +261,129 @@ const MIN_TABLE_COLS = 1;
 const MAX_TABLE_COLS = 12;
 const MIN_HEADER_ROWS = 1;
 const MAX_HEADER_ROWS = 6;
+const MIN_BODY_ROWS = 0;
+const MAX_BODY_ROWS = 40;
+const MIN_COL_WIDTH_PCT = 5;
 
-export function emptyTableCell(text = ""): PdfTableCell {
-  return { text, colSpan: 1, rowSpan: 1, covered: false };
+export function emptyTableCell(
+  text = "",
+  valueMode: PdfCellValueMode = "static",
+): PdfTableCell {
+  return { text, colSpan: 1, rowSpan: 1, covered: false, valueMode };
 }
 
-export function createEmptyTableData(cols = 4, headerRows = 1): PdfTableData {
+export function equalColWidths(cols: number): number[] {
+  const c = Math.max(1, cols);
+  const base = Math.floor((10000 / c)) / 100;
+  const widths = Array.from({ length: c }, () => base);
+  const sum = widths.reduce((a, b) => a + b, 0);
+  widths[c - 1] = Math.round((widths[c - 1] + (100 - sum)) * 100) / 100;
+  return widths;
+}
+
+export function normalizeColWidths(widths: number[] | null | undefined, cols: number): number[] {
+  const c = Math.max(1, cols);
+  if (!widths || widths.length === 0) return equalColWidths(c);
+  const next = Array.from({ length: c }, (_, i) => {
+    const v = Number(widths[i]);
+    return Number.isFinite(v) && v > 0 ? v : 100 / c;
+  });
+  const sum = next.reduce((a, b) => a + b, 0);
+  if (sum <= 0) return equalColWidths(c);
+  return next.map(w => Math.round((w / sum) * 10000) / 100);
+}
+
+/** Drag resize between col `leftCol` and `leftCol+1`; deltaPct is change to left column */
+export function resizeAdjacentColWidths(
+  widths: number[],
+  leftCol: number,
+  deltaPct: number,
+): number[] {
+  const next = [...widths];
+  const rightCol = leftCol + 1;
+  if (leftCol < 0 || rightCol >= next.length) return next;
+  const left = next[leftCol];
+  const right = next[rightCol];
+  const pair = left + right;
+  let newLeft = left + deltaPct;
+  newLeft = Math.max(MIN_COL_WIDTH_PCT, Math.min(pair - MIN_COL_WIDTH_PCT, newLeft));
+  next[leftCol] = Math.round(newLeft * 100) / 100;
+  next[rightCol] = Math.round((pair - newLeft) * 100) / 100;
+  return next;
+}
+
+export function setColWidthAt(data: PdfTableData, col: number, pct: number): PdfTableData {
+  const prev = normalizeTableData(data);
+  if (col < 0 || col >= prev.cols) return prev;
+  const widths = [...prev.colWidths];
+  const others = widths.reduce((s, w, i) => (i === col ? s : s + w), 0);
+  const clamped = Math.max(
+    MIN_COL_WIDTH_PCT,
+    Math.min(100 - MIN_COL_WIDTH_PCT * (prev.cols - 1), Number(pct) || MIN_COL_WIDTH_PCT),
+  );
+  widths[col] = clamped;
+  // Scale remaining columns to fill 100 - clamped
+  const targetOthers = 100 - clamped;
+  if (others > 0) {
+    for (let i = 0; i < widths.length; i++) {
+      if (i === col) continue;
+      widths[i] = Math.round((widths[i] / others) * targetOthers * 100) / 100;
+    }
+  }
+  return { ...prev, colWidths: normalizeColWidths(widths, prev.cols) };
+}
+
+function makeCellGrid(rows: number, cols: number, seed?: PdfTableCell[][]): PdfTableCell[][] {
+  const out: PdfTableCell[][] = [];
+  for (let i = 0; i < rows; i++) {
+    const src = seed?.[i] ?? [];
+    const row: PdfTableCell[] = [];
+    for (let j = 0; j < cols; j++) {
+      const cell = src[j];
+      row.push({
+        text: typeof cell?.text === "string" ? cell.text : "",
+        colSpan: Math.max(1, Number(cell?.colSpan) || 1),
+        rowSpan: Math.max(1, Number(cell?.rowSpan) || 1),
+        covered: Boolean(cell?.covered),
+        valueMode: normalizeCellValueMode(cell?.valueMode),
+      });
+    }
+    out.push(row);
+  }
+  return out;
+}
+
+export function createEmptyTableData(cols = 4, headerRows = 1, bodyRows = 3): PdfTableData {
   const c = clampInt(cols, MIN_TABLE_COLS, MAX_TABLE_COLS);
   const hr = clampInt(headerRows, MIN_HEADER_ROWS, MAX_HEADER_ROWS);
+  const br = clampInt(bodyRows, MIN_BODY_ROWS, MAX_BODY_ROWS);
   const headerCells: PdfTableCell[][] = [];
   for (let i = 0; i < hr; i++) {
     const row: PdfTableCell[] = [];
     for (let j = 0; j < c; j++) {
-      row.push(emptyTableCell(i === 0 && j === 0 ? "Pattern" : ""));
+      row.push(emptyTableCell(i === 0 && j === 0 ? "Ko'rsatkich" : ""));
     }
     headerCells.push(row);
   }
-  return { cols: c, headerRows: hr, headerCells };
+  const bodyCells = makeCellGrid(br, c);
+  return {
+    cols: c,
+    headerRows: hr,
+    headerCells,
+    bodyRows: br,
+    bodyCells,
+    colWidths: equalColWidths(c),
+  };
 }
 
-/** Body fill key: patternId + column index (col 0 is pattern name, not filled) */
-export function bodyCellKey(patternId: number | string, col: number) {
-  return `${patternId}:${col}`;
+/** Body fill key: row index + column index */
+export function bodyCellKey(row: number | string, col: number) {
+  return `${row}:${col}`;
+}
+
+/** Header fill key for dynamic header cells on Results */
+export function headerCellKey(row: number, col: number) {
+  return `h:${row}:${col}`;
 }
 
 export function normalizeSelection(sel: PdfTableSelection): PdfTableSelection {
@@ -284,7 +406,7 @@ export function isInSelection(
 }
 
 export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
-  // Migrate legacy full-grid format { rows, cells }
+  // Migrate legacy full-grid format { rows, cells } and header-only templates
   const legacy = data as
     | (PdfTableData & { rows?: number; cells?: PdfTableCell[][] })
     | null
@@ -295,6 +417,8 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
   let headerCells = legacy.headerCells;
   let headerRows = legacy.headerRows;
   let cols = legacy.cols;
+  let bodyCells = legacy.bodyCells;
+  let bodyRows = legacy.bodyRows;
 
   if ((!headerCells || headerCells.length === 0) && Array.isArray(legacy.cells)) {
     headerRows = 1;
@@ -304,6 +428,11 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
         emptyTableCell(typeof c?.text === "string" ? c.text : ""),
       ),
     ];
+    // Remaining legacy rows become body
+    if (legacy.cells.length > 1) {
+      bodyCells = legacy.cells.slice(1);
+      bodyRows = bodyCells.length;
+    }
   }
 
   if (!headerCells || headerCells.length === 0) return createEmptyTableData();
@@ -315,50 +444,76 @@ export function normalizeTableData(data?: PdfTableData | null): PdfTableData {
     MAX_TABLE_COLS,
   );
 
-  const out: PdfTableCell[][] = [];
-  for (let i = 0; i < hr; i++) {
-    const src = headerCells[i] ?? [];
-    const row: PdfTableCell[] = [];
-    for (let j = 0; j < c; j++) {
-      const cell = src[j];
-      row.push({
-        text: typeof cell?.text === "string" ? cell.text : "",
-        colSpan: Math.max(1, Number(cell?.colSpan) || 1),
-        rowSpan: Math.max(1, Number(cell?.rowSpan) || 1),
-        covered: Boolean(cell?.covered),
-      });
-    }
-    out.push(row);
-  }
-  return { cols: c, headerRows: hr, headerCells: out };
+  const outHeader = makeCellGrid(hr, c, headerCells);
+
+  // Legacy templates without body: start with 3 empty body rows
+  const hasBody = Array.isArray(bodyCells);
+  const br = clampInt(
+    hasBody ? bodyRows ?? bodyCells!.length : 3,
+    MIN_BODY_ROWS,
+    MAX_BODY_ROWS,
+  );
+  const outBody = makeCellGrid(br, c, hasBody ? bodyCells : undefined);
+
+  return {
+    cols: c,
+    headerRows: hr,
+    headerCells: outHeader,
+    bodyRows: br,
+    bodyCells: outBody,
+    colWidths: normalizeColWidths(legacy.colWidths, c),
+  };
 }
 
 export function resizeTableCols(data: PdfTableData, nextCols: number): PdfTableData {
   const prev = normalizeTableData(data);
   const cols = clampInt(nextCols, MIN_TABLE_COLS, MAX_TABLE_COLS);
-  const headerCells = prev.headerCells.map(row => {
-    const next: PdfTableCell[] = [];
-    for (let j = 0; j < cols; j++) {
-      next.push(row[j] ? { ...row[j] } : emptyTableCell());
-    }
-    return next;
+  const headerCells = makeCellGrid(prev.headerRows, cols, prev.headerCells);
+  const bodyCells = makeCellGrid(prev.bodyRows, cols, prev.bodyCells);
+  const colWidths =
+    cols === prev.cols
+      ? prev.colWidths
+      : cols > prev.cols
+        ? normalizeColWidths(
+            [...prev.colWidths, ...Array.from({ length: cols - prev.cols }, () => 100 / cols)],
+            cols,
+          )
+        : normalizeColWidths(prev.colWidths.slice(0, cols), cols);
+  return sanitizeMerges({
+    cols,
+    headerRows: prev.headerRows,
+    headerCells,
+    bodyRows: prev.bodyRows,
+    bodyCells,
+    colWidths,
   });
-  // Clear broken merges that overflow
-  return sanitizeMerges({ cols, headerRows: prev.headerRows, headerCells });
 }
 
 export function resizeHeaderRows(data: PdfTableData, nextHeaderRows: number): PdfTableData {
   const prev = normalizeTableData(data);
   const hr = clampInt(nextHeaderRows, MIN_HEADER_ROWS, MAX_HEADER_ROWS);
-  const headerCells: PdfTableCell[][] = [];
-  for (let i = 0; i < hr; i++) {
-    if (prev.headerCells[i]) {
-      headerCells.push(prev.headerCells[i].map(c => ({ ...c })));
-    } else {
-      headerCells.push(Array.from({ length: prev.cols }, () => emptyTableCell()));
-    }
-  }
-  return sanitizeMerges({ cols: prev.cols, headerRows: hr, headerCells });
+  const headerCells = makeCellGrid(hr, prev.cols, prev.headerCells);
+  return sanitizeMerges({
+    cols: prev.cols,
+    headerRows: hr,
+    headerCells,
+    bodyRows: prev.bodyRows,
+    bodyCells: prev.bodyCells.map(r => r.map(c => ({ ...c }))),
+    colWidths: prev.colWidths,
+  });
+}
+
+export function resizeBodyRows(data: PdfTableData, nextBodyRows: number): PdfTableData {
+  const prev = normalizeTableData(data);
+  const br = clampInt(nextBodyRows, MIN_BODY_ROWS, MAX_BODY_ROWS);
+  return {
+    cols: prev.cols,
+    headerRows: prev.headerRows,
+    headerCells: prev.headerCells.map(r => r.map(c => ({ ...c }))),
+    bodyRows: br,
+    bodyCells: makeCellGrid(br, prev.cols, prev.bodyCells),
+    colWidths: [...prev.colWidths],
+  };
 }
 
 export function updateHeaderCell(
@@ -373,7 +528,26 @@ export function updateHeaderCell(
   const headerCells = next.headerCells.map((r, ri) =>
     r.map((c, ci) => (ri === row && ci === col ? { ...c, ...patch } : { ...c })),
   );
-  return { cols: next.cols, headerRows: next.headerRows, headerCells };
+  return { ...next, headerCells };
+}
+
+export function updateBodyCell(
+  data: PdfTableData,
+  row: number,
+  col: number,
+  patch: Partial<PdfTableCell>,
+): PdfTableData {
+  const next = normalizeTableData(data);
+  if (row < 0 || col < 0 || row >= next.bodyRows || col >= next.cols) return next;
+  const bodyCells = next.bodyCells.map((r, ri) =>
+    r.map((c, ci) => (ri === row && ci === col ? { ...c, ...patch } : { ...c })),
+  );
+  return { ...next, bodyCells };
+}
+
+export function updateColWidths(data: PdfTableData, colWidths: number[]): PdfTableData {
+  const next = normalizeTableData(data);
+  return { ...next, colWidths: normalizeColWidths(colWidths, next.cols) };
 }
 
 /** Find the master cell that covers (row,col), or the cell itself */
@@ -418,7 +592,7 @@ function clearMergeAt(data: PdfTableData, row: number, col: number): PdfTableDat
       };
     }
   }
-  return { cols: d.cols, headerRows: d.headerRows, headerCells };
+  return { ...d, headerCells };
 }
 
 export function unmergeHeaderSelection(
@@ -445,7 +619,9 @@ export function mergeHeaderSelection(
   // Unmerge anything overlapping the range first
   let next = unmergeHeaderSelection(data, b);
   const headerCells = next.headerCells.map(r => r.map(c => ({ ...c })));
-  const text = headerCells[b.r1][b.c1].text;
+  const master = headerCells[b.r1][b.c1];
+  const text = master.text;
+  const valueMode = normalizeCellValueMode(master.valueMode);
   const rowSpan = b.r2 - b.r1 + 1;
   const colSpan = b.c2 - b.c1 + 1;
 
@@ -457,6 +633,7 @@ export function mergeHeaderSelection(
           colSpan,
           rowSpan,
           covered: false,
+          valueMode,
         };
       } else {
         headerCells[r][c] = {
@@ -464,29 +641,44 @@ export function mergeHeaderSelection(
           colSpan: 1,
           rowSpan: 1,
           covered: true,
+          valueMode: "static",
         };
       }
     }
   }
-  return { cols: next.cols, headerRows: next.headerRows, headerCells };
+  return { ...next, headerCells };
 }
 
 function sanitizeMerges(data: PdfTableData): PdfTableData {
   const d = normalizeTableData(data);
   // Snapshot master cells before reset
-  const masters: Array<{ r: number; c: number; text: string; rs: number; cs: number }> = [];
+  const masters: Array<{
+    r: number;
+    c: number;
+    text: string;
+    rs: number;
+    cs: number;
+    valueMode: PdfCellValueMode;
+  }> = [];
   for (let r = 0; r < d.headerRows; r++) {
     for (let c = 0; c < d.cols; c++) {
       const cell = d.headerCells[r][c];
       if (cell.covered) continue;
       const cs = Math.min(Math.max(1, cell.colSpan ?? 1), d.cols - c);
       const rs = Math.min(Math.max(1, cell.rowSpan ?? 1), d.headerRows - r);
-      masters.push({ r, c, text: cell.text, rs, cs });
+      masters.push({
+        r,
+        c,
+        text: cell.text,
+        rs,
+        cs,
+        valueMode: normalizeCellValueMode(cell.valueMode),
+      });
     }
   }
 
   const headerCells = d.headerCells.map(row =>
-    row.map(cell => emptyTableCell(cell.covered ? "" : cell.text)),
+    row.map(cell => emptyTableCell(cell.covered ? "" : cell.text, normalizeCellValueMode(cell.valueMode))),
   );
   for (const m of masters) {
     headerCells[m.r][m.c] = {
@@ -494,15 +686,27 @@ function sanitizeMerges(data: PdfTableData): PdfTableData {
       colSpan: m.cs,
       rowSpan: m.rs,
       covered: false,
+      valueMode: m.valueMode,
     };
     for (let rr = m.r; rr < m.r + m.rs; rr++) {
       for (let cc = m.c; cc < m.c + m.cs; cc++) {
         if (rr === m.r && cc === m.c) continue;
-        headerCells[rr][cc] = { text: "", colSpan: 1, rowSpan: 1, covered: true };
+        headerCells[rr][cc] = {
+          text: "",
+          colSpan: 1,
+          rowSpan: 1,
+          covered: true,
+          valueMode: "static",
+        };
       }
     }
   }
-  return { cols: d.cols, headerRows: d.headerRows, headerCells };
+  return {
+    ...d,
+    headerCells,
+    bodyCells: d.bodyCells.map(r => r.map(c => ({ ...c }))),
+    colWidths: [...d.colWidths],
+  };
 }
 
 export function tableHeightForRows(headerRows: number, bodyRows: number, compact = false): number {

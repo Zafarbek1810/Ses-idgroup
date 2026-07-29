@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   Plus, Search, X, Edit3, Trash2, RefreshCw, FlaskConical,
   CheckCircle, AlertCircle, Loader2, Eye, UserPlus, UserMinus,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Users,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Users, UserCog,
 } from "lucide-react";
 import {
   getLaboratoriesFull,
@@ -235,6 +235,120 @@ function AssistantsModal({
   );
 }
 
+function DirectorModal({
+  lab,
+  users,
+  primaryColor,
+  saving,
+  onAssign,
+  onDetach,
+  onClose,
+}: {
+  lab: Laboratory;
+  users: AppUser[];
+  primaryColor: string;
+  saving: boolean;
+  onAssign: (directorId: number) => void;
+  onDetach: () => void;
+  onClose: () => void;
+}) {
+  const [selectedId, setSelectedId] = useState<number | "">("");
+  const currentId = lab.lab_director?.id ?? null;
+  const available = users.filter(u => u.id !== currentId);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-border shrink-0">
+          <div>
+            <h2 className="font-semibold text-foreground text-[15px]">Lab direktor</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{lab.name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto ses-scrollbar p-6 space-y-5">
+          <div>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">Direktor biriktirish</label>
+            <div className="flex gap-2">
+              <select
+                value={selectedId === "" ? "" : String(selectedId)}
+                onChange={e => setSelectedId(e.target.value ? Number(e.target.value) : "")}
+                className="flex-1 bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
+              >
+                <option value="">Foydalanuvchi tanlang</option>
+                {available.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.username} {u.surname} (#{u.id})
+                  </option>
+                ))}
+              </select>
+              <button
+                disabled={saving || selectedId === ""}
+                onClick={() => {
+                  if (selectedId === "") return;
+                  onAssign(selectedId);
+                  setSelectedId("");
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl text-white text-[13px] font-semibold disabled:opacity-50"
+                style={{ background: primaryColor }}
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+                Biriktirish
+              </button>
+            </div>
+            {available.length === 0 && (
+              <p className="text-[11px] text-muted-foreground mt-1.5">Biriktirish uchun foydalanuvchi yo&apos;q</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-xs font-bold text-foreground uppercase tracking-wider mb-3">
+              Biriktirilgan {lab.lab_director ? "(1)" : "(0)"}
+            </h3>
+            {!lab.lab_director ? (
+              <div className="rounded-xl border border-dashed border-border px-4 py-8 text-center">
+                <UserCog className="w-5 h-5 text-muted-foreground mx-auto mb-2" />
+                <p className="text-xs text-muted-foreground">Hali direktor biriktirilmagan</p>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/40 px-3.5 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-semibold text-foreground truncate">
+                    {assistantLabel(lab.lab_director)}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground font-mono">#{lab.lab_director.id}</div>
+                </div>
+                <button
+                  disabled={saving}
+                  onClick={onDetach}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[12px] font-medium text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30 transition-colors disabled:opacity-50"
+                  title="Olib tashlash"
+                >
+                  <UserMinus className="w-3.5 h-3.5" />
+                  Olib tashlash
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="px-6 pb-6 pt-2 shrink-0 border-t border-border">
+          <button
+            onClick={onClose}
+            className="w-full py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+          >
+            Yopish
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) {
   const [labs, setLabs] = useState<Laboratory[]>([]);
   const [users, setUsers] = useState<AppUser[]>([]);
@@ -251,6 +365,7 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
     | { type: "edit"; lab: Laboratory }
     | { type: "delete"; lab: Laboratory }
     | { type: "assistants"; lab: Laboratory }
+    | { type: "director"; lab: Laboratory }
     | null
   >(null);
 
@@ -281,10 +396,13 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
     }
   };
 
-  const refreshAssistantsLab = async (labId: number) => {
+  const refreshLabModal = async (
+    labId: number,
+    type: "assistants" | "director",
+  ) => {
     try {
       const fresh = await getLaboratoryById(labId);
-      setModal(m => (m?.type === "assistants" ? { type: "assistants", lab: fresh } : m));
+      setModal(m => (m?.type === type ? { type, lab: fresh } : m));
       setLabs(list => list.map(l => (l.id === labId ? fresh : l)));
     } catch {
       await loadLabs();
@@ -360,7 +478,7 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
     try {
       await attachLabAssistant(modal.lab.id, assistantId);
       pushToast("Assistent biriktirildi");
-      await refreshAssistantsLab(modal.lab.id);
+      await refreshLabModal(modal.lab.id, "assistants");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Biriktirishda xatolik", "error");
     } finally {
@@ -374,9 +492,37 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
     try {
       await detachLabAssistant(modal.lab.id, assistantId);
       pushToast("Assistent olib tashlandi");
-      await refreshAssistantsLab(modal.lab.id);
+      await refreshLabModal(modal.lab.id, "assistants");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Olib tashlashda xatolik", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAssignDirector = async (directorId: number) => {
+    if (modal?.type !== "director") return;
+    setSaving(true);
+    try {
+      await updateLaboratory(modal.lab.id, { lab_director_id: directorId });
+      pushToast("Direktor biriktirildi");
+      await refreshLabModal(modal.lab.id, "director");
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Direktor biriktirishda xatolik", "error");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDetachDirector = async () => {
+    if (modal?.type !== "director") return;
+    setSaving(true);
+    try {
+      await updateLaboratory(modal.lab.id, { lab_director_id: null });
+      pushToast("Direktor olib tashlandi");
+      await refreshLabModal(modal.lab.id, "director");
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Direktorni olib tashlashda xatolik", "error");
     } finally {
       setSaving(false);
     }
@@ -496,8 +642,18 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
                         </div>
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground">
-                      {lab.lab_director ? assistantLabel(lab.lab_director) : "—"}
+                    <td className="px-5 py-3.5">
+                      <button
+                        onClick={() => setModal({ type: "director", lab })}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold transition-colors hover:opacity-80 max-w-[180px]"
+                        style={{ background: `${primaryColor}15`, color: primaryColor }}
+                        title="Direktor biriktirish"
+                      >
+                        <UserCog className="w-3 h-3 shrink-0" />
+                        <span className="truncate">
+                          {lab.lab_director ? assistantLabel(lab.lab_director) : "Biriktirish"}
+                        </span>
+                      </button>
                     </td>
                     <td className="px-5 py-3.5">
                       <button
@@ -514,6 +670,13 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => setModal({ type: "director", lab })}
+                          className="p-1.5 rounded-lg hover:bg-emerald-50 hover:text-emerald-600 text-muted-foreground transition-colors"
+                          title="Direktor"
+                        >
+                          <UserCog className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           onClick={() => setModal({ type: "assistants", lab })}
                           className="p-1.5 rounded-lg hover:bg-sky-50 hover:text-sky-600 text-muted-foreground transition-colors"
@@ -636,6 +799,17 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
           saving={saving}
           onAttach={handleAttach}
           onDetach={handleDetach}
+          onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.type === "director" && (
+        <DirectorModal
+          lab={modal.lab}
+          users={users}
+          primaryColor={primaryColor}
+          saving={saving}
+          onAssign={handleAssignDirector}
+          onDetach={handleDetachDirector}
           onClose={() => setModal(null)}
         />
       )}

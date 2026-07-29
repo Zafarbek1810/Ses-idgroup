@@ -7,7 +7,6 @@ import {
   AlignRight, GripVertical, X, Upload, Database, Minus, Combine,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
-import { getAllPatterns, resolvePatternAnalysisId, type Pattern } from "@/api/pattern";
 import { ApiError } from "@/api/client";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
@@ -29,11 +28,15 @@ import {
   mergeHeaderSelection,
   normalizeSelection,
   normalizeTableData,
+  resizeBodyRows,
   resizeHeaderRows,
   resizeTableCols,
   setActiveTemplateId,
+  setColWidthAt,
   tableHeightForRows,
   unmergeHeaderSelection,
+  updateBodyCell,
+  updateColWidths,
   updateHeaderCell,
   upsertPdfTemplate,
   type PdfDynamicFieldKey,
@@ -60,7 +63,7 @@ const TOOLS: ToolDef[] = [
   { type: "heading3", label: "Sarlavha 3", icon: Heading3, hint: "Kichik sarlavha" },
   { type: "text", label: "Matn", icon: Type, hint: "Oddiy matn bloki" },
   { type: "image", label: "Rasm", icon: ImageIcon, hint: "Rasm joylash" },
-  { type: "table", label: "Jadval", icon: Table2, hint: "Header chizing + analiz patternlari" },
+  { type: "table", label: "Jadval", icon: Table2, hint: "Header + body qo'lda, ustun kengligi" },
 ];
 
 type DragPayload =
@@ -89,7 +92,6 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
-  const [patterns, setPatterns] = useState<Pattern[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [dragTool, setDragTool] = useState<DragPayload | null>(null);
@@ -112,9 +114,8 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   const loadMeta = async () => {
     setLoadingMeta(true);
     try {
-      const [a, p] = await Promise.all([getAllAnalyses(), getAllPatterns()]);
+      const a = await getAllAnalyses();
       setAnalyses(a);
-      setPatterns(p);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Ma'lumot yuklanmadi", "error");
     } finally {
@@ -266,19 +267,12 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     reader.readAsDataURL(file);
   };
 
-  const patternsForAnalysis = (analysisId: number | null | undefined) => {
-    if (analysisId == null) return [];
-    const id = Number(analysisId);
-    if (!Number.isFinite(id) || id <= 0) return [];
-    return patterns.filter(p => resolvePatternAnalysisId(p) === id);
-  };
-
   const setSelectedTableData = (tableData: PdfTableData) => {
     if (!selected || selected.type !== "table") return;
-    const bodyRows = patternsForAnalysis(selected.analysisId).length;
+    const td = normalizeTableData(tableData);
     updateElement(selected.id, {
-      tableData,
-      height: tableHeightForRows(tableData.headerRows, bodyRows),
+      tableData: td,
+      height: tableHeightForRows(td.headerRows, td.bodyRows),
     });
   };
 
@@ -591,19 +585,15 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                   <FreeTableBuilder
                     selected={selected}
                     analyses={analyses}
-                    patternCount={patternsForAnalysis(selected.analysisId).length}
                     primaryColor={primaryColor}
                     selection={tableSel}
                     onSelectCell={handleSelectHeaderCell}
                     onClearSelection={() => setTableSel(null)}
                     onUpdate={patch => {
-                      const nextAnalysisId =
-                        patch.analysisId !== undefined ? patch.analysisId : selected.analysisId;
-                      const bodyRows = patternsForAnalysis(nextAnalysisId).length;
                       const td = normalizeTableData(patch.tableData ?? selected.tableData);
                       updateElement(selected.id, {
                         ...patch,
-                        height: tableHeightForRows(td.headerRows, bodyRows),
+                        height: tableHeightForRows(td.headerRows, td.bodyRows),
                       });
                     }}
                     onTableData={setSelectedTableData}
@@ -733,7 +723,6 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                   selected={selectedId === el.id}
                   editing={editingId === el.id}
                   primaryColor={primaryColor}
-                  patterns={patternsForAnalysis(el.analysisId)}
                   tableSel={selectedId === el.id ? tableSel : null}
                   onSelect={() => selectElement(el.id)}
                   onSelectHeaderCell={(row, col, shiftKey) => {
@@ -741,10 +730,10 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                     handleSelectHeaderCell(row, col, shiftKey);
                   }}
                   onTableDataChange={data => {
-                    const bodyRows = patternsForAnalysis(el.analysisId).length;
+                    const td = normalizeTableData(data);
                     updateElement(el.id, {
-                      tableData: data,
-                      height: tableHeightForRows(data.headerRows, bodyRows),
+                      tableData: td,
+                      height: tableHeightForRows(td.headerRows, td.bodyRows),
                     });
                   }}
                   onStartEdit={() => {
@@ -786,7 +775,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
 
       {loadingMeta && (
         <div className="fixed bottom-5 left-5 z-[60] flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border shadow text-[12px] text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analiz/pattern yuklanmoqda...
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analizlar yuklanmoqda...
         </div>
       )}
     </div>
@@ -796,7 +785,6 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
 function FreeTableBuilder({
   selected,
   analyses,
-  patternCount,
   primaryColor,
   selection,
   onSelectCell,
@@ -806,7 +794,6 @@ function FreeTableBuilder({
 }: {
   selected: PdfElement;
   analyses: Analysis[];
-  patternCount: number;
   primaryColor: string;
   selection: PdfTableSelection | null;
   onSelectCell: (row: number, col: number, shiftKey: boolean) => void;
@@ -836,16 +823,17 @@ function FreeTableBuilder({
   return (
     <div className="space-y-3">
       <p className="text-[11px] text-muted-foreground leading-relaxed">
-        Faqat <strong>header</strong>ni chizing (birlashtirish mumkin). Body — tanlangan
-        analiz patternlari: 1-ustun nomi, qolganlari input.
+        Har bir katakning o&apos;ngidagi ▾ tugmasi:{" "}
+        <strong>O&apos;zgarmaydigan</strong> — faqat shu yerda tahrir;{" "}
+        <strong>O&apos;zgaradigan</strong> — Natijalar sahifasida to&apos;ldiriladi.
+        Ustun kengligini jadvalda tortib o&apos;zgartirish mumkin.
       </p>
 
       <div>
         <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-          Analiz tanlash *
+          Analiz bog&apos;lash
         </label>
         <select
-          autoFocus
           value={selected.analysisId ?? ""}
           onChange={e => {
             const id = e.target.value ? Number(e.target.value) : null;
@@ -857,25 +845,19 @@ function FreeTableBuilder({
           }}
           className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
         >
-          <option value="">Analiz tanlang...</option>
+          <option value="">Ixtiyoriy...</option>
           {analyses.map(a => (
             <option key={a.id} value={a.id}>
               {a.name} {a.laboratory?.name ? `(${a.laboratory.name})` : ""}
             </option>
           ))}
         </select>
-        {selected.analysisId ? (
-          <p className="text-[10px] text-emerald-600 font-medium mt-1">
-            {patternCount} ta pattern bodyda chiqadi
-          </p>
-        ) : (
-          <p className="text-[10px] text-amber-600 mt-1">
-            Analiz tanlang — patternlar bodyda paydo bo&apos;ladi
-          </p>
-        )}
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Natijalar sahifasida shablonni analizga moslash uchun
+        </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid grid-cols-3 gap-2">
         <div>
           <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
             Ustunlar
@@ -902,7 +884,7 @@ function FreeTableBuilder({
         </div>
         <div>
           <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
-            Header qatorlari
+            Header
           </label>
           <div className="flex items-center gap-1">
             <button
@@ -924,6 +906,59 @@ function FreeTableBuilder({
             </button>
           </div>
         </div>
+        <div>
+          <label className="block text-[11px] font-semibold text-muted-foreground mb-1">
+            Body
+          </label>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => onTableData(resizeBodyRows(data, data.bodyRows - 1))}
+              className="p-2 rounded-lg border border-border hover:bg-secondary"
+            >
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <span className="flex-1 text-center text-[13px] font-semibold tabular-nums">
+              {data.bodyRows}
+            </span>
+            <button
+              type="button"
+              onClick={() => onTableData(resizeBodyRows(data, data.bodyRows + 1))}
+              className="p-2 rounded-lg border border-border hover:bg-secondary"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <label className="block text-[11px] font-semibold text-muted-foreground mb-1.5">
+          Ustun kengliklari (%)
+        </label>
+        <div className="grid gap-1.5" style={{ gridTemplateColumns: `repeat(${Math.min(data.cols, 4)}, minmax(0, 1fr))` }}>
+          {data.colWidths.map((w, i) => (
+            <label key={i} className="flex items-center gap-1 text-[10px] text-muted-foreground">
+              <span className="shrink-0 w-4">{i + 1}</span>
+              <input
+                type="number"
+                min={5}
+                max={90}
+                step={1}
+                value={Math.round(w)}
+                onChange={e => {
+                  const pct = Number(e.target.value);
+                  if (!Number.isFinite(pct)) return;
+                  onTableData(setColWidthAt(data, i, pct));
+                }}
+                className="w-full bg-card border border-border rounded-lg px-2 py-1.5 text-[12px] text-foreground tabular-nums focus:outline-none"
+              />
+            </label>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground mt-1">
+          Yoki jadvalda ustun chegarasini torting
+        </p>
       </div>
 
       <div className="flex gap-2">
@@ -937,7 +972,7 @@ function FreeTableBuilder({
           className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 rounded-xl border border-border text-[11px] font-semibold disabled:opacity-40 hover:bg-secondary"
           style={canMerge ? { borderColor: primaryColor, color: primaryColor } : undefined}
         >
-          <Combine className="w-3.5 h-3.5" /> Birlashtirish
+          <Combine className="w-3.5 h-3.5" /> Header birlashtirish
         </button>
         <button
           type="button"
@@ -952,7 +987,7 @@ function FreeTableBuilder({
         </button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Katakni tanlang, keyin <kbd className="px-1 rounded bg-secondary">Shift</kbd>+bosib
+        Header katakni tanlang, <kbd className="px-1 rounded bg-secondary">Shift</kbd>+bosib
         diapazonni kengaytiring, so&apos;ng Birlashtirish.
       </p>
 
@@ -973,27 +1008,67 @@ function FreeTableBuilder({
               Bekor
             </button>
           </div>
-          <input
-            value={activeCell.text}
-            onChange={e =>
-              onTableData(updateHeaderCell(data, active.row, active.col, { text: e.target.value }))
-            }
-            onFocus={() => onSelectCell(active.row, active.col, false)}
-            placeholder="Sarlavha matni..."
-            className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
-          />
+          <div className="flex gap-1.5">
+            <button
+              type="button"
+              onClick={() =>
+                onTableData(
+                  updateHeaderCell(data, active.row, active.col, { valueMode: "static" }),
+                )
+              }
+              className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold border ${
+                (activeCell.valueMode ?? "static") !== "dynamic"
+                  ? "border-foreground/30 bg-card text-foreground"
+                  : "border-border text-muted-foreground hover:bg-card"
+              }`}
+            >
+              O&apos;zgarmaydigan
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onTableData(
+                  updateHeaderCell(data, active.row, active.col, { valueMode: "dynamic" }),
+                )
+              }
+              className={`flex-1 py-1.5 rounded-lg text-[10px] font-semibold border ${
+                activeCell.valueMode === "dynamic"
+                  ? "border-amber-500/50 bg-amber-50 text-amber-800"
+                  : "border-border text-muted-foreground hover:bg-card"
+              }`}
+            >
+              O&apos;zgaradigan
+            </button>
+          </div>
+          {(activeCell.valueMode ?? "static") !== "dynamic" ? (
+            <input
+              value={activeCell.text}
+              onChange={e =>
+                onTableData(
+                  updateHeaderCell(data, active.row, active.col, { text: e.target.value }),
+                )
+              }
+              onFocus={() => onSelectCell(active.row, active.col, false)}
+              placeholder="Sarlavha matni..."
+              className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
+            />
+          ) : (
+            <p className="text-[10px] text-amber-700 bg-amber-50 rounded-lg px-2.5 py-2">
+              O&apos;zgaradigan — matn Natijalar sahifasida kiritiladi
+            </p>
+          )}
         </div>
       )}
 
       <button
         type="button"
         onClick={() => {
-          onTableData(createEmptyTableData(4, 1));
+          onTableData(createEmptyTableData(4, 1, 3));
           onClearSelection();
         }}
         className="w-full text-[11px] font-medium py-2 rounded-xl border border-dashed border-border text-muted-foreground hover:text-foreground"
       >
-        Headerni tozalash (4 ustun)
+        Jadvalni tozalash (4×1 header, 3 body)
       </button>
     </div>
   );
@@ -1004,7 +1079,6 @@ function CanvasElement({
   selected,
   editing,
   primaryColor,
-  patterns,
   tableSel,
   onSelect,
   onSelectHeaderCell,
@@ -1020,7 +1094,6 @@ function CanvasElement({
   selected: boolean;
   editing: boolean;
   primaryColor: string;
-  patterns: Pattern[];
   tableSel: PdfTableSelection | null;
   onSelect: () => void;
   onSelectHeaderCell: (row: number, col: number, shiftKey: boolean) => void;
@@ -1217,8 +1290,9 @@ function CanvasElement({
         <div className="w-full h-full bg-white overflow-auto" onPointerDown={e => e.stopPropagation()}>
           <CustomPdfTable
             data={normalizeTableData(element.tableData)}
-            patterns={patterns.map(p => ({ id: p.id, name: p.name }))}
+            showValueModeMenu={selected}
             editableHeader={selected}
+            editableBody={selected}
             selection={tableSel}
             onSelectHeaderCell={(row, col, shiftKey) => {
               onSelectHeaderCell(row, col, shiftKey);
@@ -1226,6 +1300,17 @@ function CanvasElement({
             onChangeHeaderCell={(row, col, patch) => {
               onTableDataChange(
                 updateHeaderCell(normalizeTableData(element.tableData), row, col, patch),
+              );
+            }}
+            onChangeBodyCell={(row, col, patch) => {
+              onTableDataChange(
+                updateBodyCell(normalizeTableData(element.tableData), row, col, patch),
+              );
+            }}
+            resizableColumns={selected}
+            onColWidthsChange={widths => {
+              onTableDataChange(
+                updateColWidths(normalizeTableData(element.tableData), widths),
               );
             }}
             compact

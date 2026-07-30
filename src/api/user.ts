@@ -23,6 +23,7 @@ export type UserPayload = {
   email: string;
   password: string;
   role_id: number;
+  company_id?: number;
 };
 
 export type UserUpdatePayload = {
@@ -31,6 +32,7 @@ export type UserUpdatePayload = {
   email: string;
   role_id: number;
   password?: string;
+  company_id?: number;
 };
 
 export type UsersFullParams = {

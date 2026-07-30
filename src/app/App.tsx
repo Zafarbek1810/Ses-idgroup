@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import {
   LayoutDashboard, Users, Settings as SettingsIcon, Settings, ChevronLeft, ChevronDown, Shield,
   Sun, Moon, Monitor, Globe, LogOut, User, Edit3, X, Check,
-  Bell, HelpCircle, UserPlus, Wallet, ClipboardList, FileBarChart2,
+  Bell, HelpCircle, UserPlus, Wallet, ClipboardList, FileBarChart2, Building2,
 } from "lucide-react";
 import {
   clearSession,
@@ -16,6 +16,7 @@ import {
   DashboardPage,
   EmployeesPage,
   ManagementPage,
+  CompaniesPage,
   PatientsPage,
   OrderPage,
   OrdersPage,
@@ -42,6 +43,7 @@ function getStoredPrimaryColor(): string {
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard, section: "main" },
   { id: "management", label: "Boshqaruv", icon: SettingsIcon, section: "main" },
+  { id: "companies", label: "Tashkilot yaratish", icon: Building2, section: "main" },
   { id: "patients", label: "Ro'yxatga olish", icon: UserPlus, section: "main" },
   { id: "kassa", label: "Kassa", icon: Wallet, section: "main" },
   { id: "orders", label: "Buyurtmalar", icon: ClipboardList, section: "main" },
@@ -650,6 +652,8 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
           <EmployeesPage primaryColor={primaryColor} />
         ) : activeNav === "management" ? (
           <ManagementPage primaryColor={primaryColor} />
+        ) : activeNav === "companies" ? (
+          <CompaniesPage primaryColor={primaryColor} />
         ) : (
           <DashboardPage primaryColor={primaryColor} />
         )}

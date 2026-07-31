@@ -7,6 +7,14 @@ export type UserRole = {
   createdAt: string;
 } | null;
 
+export type UserCompany = {
+  id: number;
+  name: string;
+  description: string;
+  address: string;
+  createdAt: string;
+} | null;
+
 export type AppUser = {
   id: number;
   username: string;
@@ -15,6 +23,7 @@ export type AppUser = {
   password?: string;
   createdAt: string;
   role: UserRole;
+  company?: UserCompany;
 };
 
 export type UserPayload = {
@@ -82,6 +91,21 @@ function normalizeFullResponse(raw: unknown, params: UsersFullParams): UsersFull
   return { data: [], total: 0, page, limit };
 }
 
+function mergeUsersWithDetails(pageUsers: AppUser[], details: AppUser[]): AppUser[] {
+  if (!details.length) return pageUsers;
+
+  const byId = new Map(details.map(u => [u.id, u]));
+  return pageUsers.map(user => {
+    const full = byId.get(user.id);
+    if (!full) return user;
+    return {
+      ...user,
+      role: full.role ?? user.role ?? null,
+      company: full.company ?? user.company ?? null,
+    };
+  });
+}
+
 export function getAllUsers() {
   return apiRequest<AppUser[]>("/user/getall", {
     method: "GET",
@@ -96,12 +120,22 @@ export async function getUsersFull(params: UsersFullParams = {}): Promise<UsersF
   if (params.search?.trim()) q.set("search", params.search.trim());
 
   const qs = q.toString();
-  const raw = await apiRequest<unknown>(`/user/getfull${qs ? `?${qs}` : ""}`, {
-    method: "GET",
-    fallbackError: "Foydalanuvchilarni yuklab bo'lmadi",
-  });
 
-  return normalizeFullResponse(raw, params);
+  const [raw, detailsResult] = await Promise.all([
+    apiRequest<unknown>(`/user/getfull${qs ? `?${qs}` : ""}`, {
+      method: "GET",
+      fallbackError: "Foydalanuvchilarni yuklab bo'lmadi",
+    }),
+    getAllUsers().catch(() => [] as AppUser[]),
+  ]);
+
+  const page = normalizeFullResponse(raw, params);
+  const details = Array.isArray(detailsResult) ? detailsResult : [];
+
+  return {
+    ...page,
+    data: mergeUsersWithDetails(page.data, details),
+  };
 }
 
 export function getUserById(id: number) {

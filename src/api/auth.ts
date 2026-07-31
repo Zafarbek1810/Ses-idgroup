@@ -15,6 +15,8 @@ export {
   getAccessToken,
   getRefreshToken,
   getStoredUser,
+  setStoredUser,
+  getStoredCompanyId,
   isAuthenticated,
 } from "./session";
 

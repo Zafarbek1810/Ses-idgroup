@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   Plus, Search, X, Edit3, Trash2, RefreshCw, Users,
   CheckCircle, AlertCircle, Loader2, Eye, EyeOff,
-  ChevronLeft, ChevronsLeft, ChevronsRight, Mail, Shield,
+  ChevronLeft, ChevronsLeft, ChevronsRight, Mail, Shield, Building2,
 } from "lucide-react";
 import {
   getUsersFull,
@@ -15,6 +15,7 @@ import {
   type UserUpdatePayload,
 } from "@/api/user";
 import { getAllRoles, type Role } from "@/api/role";
+import { getStoredCompanyId } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 
@@ -281,12 +282,18 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
     setSaving(true);
     try {
       if (modal.type === "add") {
+        const companyId = getStoredCompanyId();
+        if (companyId == null) {
+          pushToast("Kompaniya ID topilmadi. Qayta login qiling.", "error");
+          return;
+        }
         const payload: UserPayload = {
           username: form.username.trim(),
           surname: form.surname.trim(),
           email: form.email.trim(),
           password: form.password,
           role_id: form.role_id,
+          company_id: companyId,
         };
         await addUser(payload);
         pushToast(`${payload.username} qo'shildi`);
@@ -298,6 +305,8 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
           role_id: form.role_id,
         };
         if (form.password.trim()) payload.password = form.password;
+        const companyId = getStoredCompanyId();
+        if (companyId != null) payload.company_id = companyId;
         await updateUser(modal.user.id, payload);
         pushToast(`${payload.username} yangilandi`);
       }
@@ -393,7 +402,7 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-secondary/40">
-                {["Foydalanuvchi", "Email", "Rol", "Yaratilgan", ""].map((h, i) => (
+                {["Foydalanuvchi", "Email", "Rol", "Tashkilot", "Yaratilgan", ""].map((h, i) => (
                   <th key={i} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-5 py-3 whitespace-nowrap">
                     {h}
                   </th>
@@ -403,7 +412,7 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-16 text-center">
+                  <td colSpan={6} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 className="w-6 h-6 animate-spin" style={{ color: primaryColor }} />
                       <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
@@ -412,7 +421,7 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
                 </tr>
               ) : users.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-16 text-center">
+                  <td colSpan={6} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center">
                         <Users className="w-6 h-6 text-muted-foreground" />
@@ -460,6 +469,16 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
                         </span>
                       ) : (
                         <span className="text-[11px] text-muted-foreground">Rol yo'q</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {user.company ? (
+                        <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground max-w-[180px]">
+                          <Building2 className="w-3.5 h-3.5 shrink-0" />
+                          <span className="truncate">{user.company.name}</span>
+                        </div>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">—</span>
                       )}
                     </td>
                     <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">

@@ -20,9 +20,9 @@ import {
   createEmptyTableData,
   createPdfElement,
   createTemplateId,
-  deletePdfTemplate,
+  deletePdfTemplateRemote,
+  fetchPdfTemplatesFromApi,
   formatDynamicDisplay,
-  getActiveTemplateId,
   getDynamicFieldDef,
   loadPdfTemplates,
   mergeBodySelection,
@@ -40,7 +40,7 @@ import {
   updateBodyCell,
   updateColWidths,
   updateHeaderCell,
-  upsertPdfTemplate,
+  upsertPdfTemplateRemote,
   type PdfDynamicFieldKey,
   type PdfElement,
   type PdfElementType,
@@ -73,29 +73,121 @@ type DragPayload =
   | { kind: "tool"; type: PdfElementType }
   | { kind: "dynamic"; key: PdfDynamicFieldKey };
 
-function emptyTemplate(): PdfTemplate {
+function emptyTemplate(analysis?: { id: number; name: string } | null): PdfTemplate {
   const now = new Date().toISOString();
   return {
     id: createTemplateId(),
-    name: "Yangi PDF shablon",
+    name: analysis?.name ? `${analysis.name} shablon` : "Yangi PDF shablon",
     elements: [],
     createdAt: now,
     updatedAt: now,
+    analysisId: analysis?.id ?? null,
+    analysisName: analysis?.name ?? "",
   };
 }
 
+function NewTemplateModal({
+  analyses,
+  primaryColor,
+  onConfirm,
+  onClose,
+}: {
+  analyses: Analysis[];
+  primaryColor: string;
+  onConfirm: (analysis: Analysis) => void;
+  onClose: () => void;
+}) {
+  const [analysisId, setAnalysisId] = useState<string>("");
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = () => {
+    const id = Number(analysisId);
+    const found = analyses.find(a => a.id === id);
+    if (!found) {
+      setError("Analizni tanlang");
+      return;
+    }
+    onConfirm(found);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-md overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-5 border-b border-border">
+          <div>
+            <h2 className="font-semibold text-foreground text-[15px]">Yangi PDF shablon</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Qaysi analiz uchun shablon yaratilayotganini tanlang
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="p-6">
+          <label className="block text-xs font-semibold text-foreground mb-1.5">
+            Analiz *
+          </label>
+          <select
+            value={analysisId}
+            onChange={e => {
+              setAnalysisId(e.target.value);
+              setError(null);
+            }}
+            className={`w-full bg-secondary border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none ${
+              error ? "border-red-400" : "border-border focus:border-[var(--primary)]"
+            }`}
+          >
+            <option value="">Analizni tanlang...</option>
+            {analyses.map(a => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+                {a.laboratory?.name ? ` (${a.laboratory.name})` : ""}
+              </option>
+            ))}
+          </select>
+          {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+        </div>
+
+        <div className="flex gap-3 px-6 pb-6">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+          >
+            Bekor qilish
+          </button>
+          <button
+            type="button"
+            onClick={submit}
+            className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98]"
+            style={{ background: primaryColor }}
+          >
+            Davom etish
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
-  const [templates, setTemplates] = useState<PdfTemplate[]>(() => loadPdfTemplates());
-  const [template, setTemplate] = useState<PdfTemplate>(() => {
-    const list = loadPdfTemplates();
-    const activeId = getActiveTemplateId();
-    const found = activeId ? list.find(t => t.id === activeId) : list[0];
-    return found ? structuredClone(found) : emptyTemplate();
-  });
+  const [templates, setTemplates] = useState<PdfTemplate[]>([]);
+  const [template, setTemplate] = useState<PdfTemplate>(() => emptyTemplate());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [newModalOpen, setNewModalOpen] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [dragTool, setDragTool] = useState<DragPayload | null>(null);
   const [tableSel, setTableSel] = useState<PdfTableSelection | null>(null);
@@ -114,11 +206,19 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 3200);
   };
 
+  const applyLoadedTemplates = (list: PdfTemplate[]) => {
+    setTemplates(list);
+  };
+
   const loadMeta = async () => {
     setLoadingMeta(true);
     try {
-      const a = await getAllAnalyses();
+      const [a, remoteTemplates] = await Promise.all([
+        getAllAnalyses(),
+        fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]),
+      ]);
       setAnalyses(a);
+      applyLoadedTemplates(remoteTemplates);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Ma'lumot yuklanmadi", "error");
     } finally {
@@ -175,7 +275,17 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     const el =
       payload.kind === "dynamic"
         ? createDynamicElement(payload.key, x - 40, y - 10)
-        : createPdfElement(payload.type, x - 40, y - 16);
+        : createPdfElement(
+            payload.type,
+            x - 40,
+            y - 16,
+            payload.type === "table" && template.analysisId
+              ? {
+                  analysisId: template.analysisId,
+                  analysisName: template.analysisName ?? "",
+                }
+              : undefined,
+          );
     setTemplate(t => ({ ...t, elements: [...t.elements, el] }));
     setSelectedId(el.id);
     setEditingId(null);
@@ -219,25 +329,40 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     }));
   };
 
-  const handleSave = () => {
-    const next: PdfTemplate = {
-      ...template,
-      name: template.name.trim() || "PDF shablon",
-      updatedAt: new Date().toISOString(),
-      createdAt: template.createdAt || new Date().toISOString(),
-    };
-    upsertPdfTemplate(next);
-    setTemplate(next);
-    setTemplates(loadPdfTemplates());
-    pushToast("PDF shablon saqlandi");
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const saved = await upsertPdfTemplateRemote(template);
+      setTemplate(saved);
+      setTemplates(loadPdfTemplates());
+      pushToast("PDF shablon bazaga saqlandi");
+    } catch (err) {
+      pushToast(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Saqlab bo'lmadi",
+        "error",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleNew = () => {
-    const t = emptyTemplate();
+    setNewModalOpen(true);
+  };
+
+  const handleConfirmNew = (analysis: Analysis) => {
+    const t = emptyTemplate({ id: analysis.id, name: analysis.name });
     setTemplate(t);
     setSelectedId(null);
     setEditingId(null);
+    setTableSel(null);
     setActiveTemplateId(null);
+    setNewModalOpen(false);
+    setEditorOpen(true);
   };
 
   const handleLoad = (id: string) => {
@@ -246,19 +371,39 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
     setTemplate(structuredClone(found));
     setSelectedId(null);
     setEditingId(null);
+    setTableSel(null);
     setActiveTemplateId(id);
+    setEditorOpen(true);
   };
 
-  const handleDeleteTemplate = (id: string) => {
-    deletePdfTemplate(id);
-    const list = loadPdfTemplates();
-    setTemplates(list);
-    if (template.id === id) {
-      setTemplate(list[0] ? structuredClone(list[0]) : emptyTemplate());
-      setSelectedId(null);
-      setEditingId(null);
+  const handleDeleteTemplate = async (id: string) => {
+    const target = templates.find(t => t.id === id) ?? (template.id === id ? template : null);
+    if (!target) return;
+    setDeleting(true);
+    try {
+      await deletePdfTemplateRemote(target);
+      const list = loadPdfTemplates();
+      setTemplates(list);
+      if (template.id === id) {
+        setTemplate(emptyTemplate());
+        setSelectedId(null);
+        setEditingId(null);
+        setTableSel(null);
+        setEditorOpen(false);
+      }
+      pushToast("Shablon o'chirildi");
+    } catch (err) {
+      pushToast(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "O'chirib bo'lmadi",
+        "error",
+      );
+    } finally {
+      setDeleting(false);
     }
-    pushToast("Shablon o'chirildi");
   };
 
   const applyImageFile = (file: File | null, elementId: string) => {
@@ -298,17 +443,35 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-2xl border border-border shadow-sm p-4 flex flex-wrap items-center gap-3">
-        <div className="flex items-center gap-2 min-w-0 flex-1">
-          <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-          <input
-            value={template.name}
-            onChange={e => setTemplate(t => ({ ...t, name: e.target.value }))}
-            className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)] w-full max-w-xs"
-            placeholder="Shablon nomi"
-          />
-        </div>
+        {editorOpen ? (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+            <input
+              value={template.name}
+              onChange={e => setTemplate(t => ({ ...t, name: e.target.value }))}
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)] w-full max-w-xs"
+              placeholder="Shablon nomi"
+            />
+            {template.analysisId ? (
+              <span
+                className="hidden sm:inline-flex items-center max-w-[200px] truncate px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-foreground"
+                style={{ background: `${primaryColor}18` }}
+                title={template.analysisName || `Analiz #${template.analysisId}`}
+              >
+                {template.analysisName || `Analiz #${template.analysisId}`}
+              </span>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+            <p className="text-[13px] text-muted-foreground">
+              Yangi shablon yaratish yoki saqlanganini tanlash
+            </p>
+          </div>
+        )}
         <select
-          value={templates.some(t => t.id === template.id) ? template.id : ""}
+          value={editorOpen && templates.some(t => t.id === template.id) ? template.id : ""}
           onChange={e => {
             if (e.target.value) handleLoad(e.target.value);
           }}
@@ -326,22 +489,38 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
         >
           <Plus className="w-3.5 h-3.5" /> Yangi
         </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white"
-          style={{ background: primaryColor }}
-        >
-          <Save className="w-3.5 h-3.5" /> Saqlash
-        </button>
-        {templates.some(t => t.id === template.id) && (
-          <button
-            type="button"
-            onClick={() => handleDeleteTemplate(template.id)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold text-red-600 bg-red-500/10 hover:bg-red-500/15"
-          >
-            <Trash2 className="w-3.5 h-3.5" /> O&apos;chirish
-          </button>
+        {editorOpen && (
+          <>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving || deleting}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
+              style={{ background: primaryColor }}
+            >
+              {saving ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Save className="w-3.5 h-3.5" />
+              )}
+              Saqlash
+            </button>
+            {templates.some(t => t.id === template.id) && (
+              <button
+                type="button"
+                onClick={() => void handleDeleteTemplate(template.id)}
+                disabled={saving || deleting}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold text-red-600 bg-red-500/10 hover:bg-red-500/15 disabled:opacity-50"
+              >
+                {deleting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Trash2 className="w-3.5 h-3.5" />
+                )}
+                O&apos;chirish
+              </button>
+            )}
+          </>
         )}
         <button
           type="button"
@@ -353,6 +532,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
         </button>
       </div>
 
+      {editorOpen ? (
       <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr] gap-4 items-start">
         {/* Tools + properties */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden max-h-[calc(100vh-200px)] flex flex-col">
@@ -598,10 +778,24 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                     onClearSelection={() => setTableSel(null)}
                     onUpdate={patch => {
                       const td = normalizeTableData(patch.tableData ?? selected.tableData);
-                      updateElement(selected.id, {
-                        ...patch,
-                        height: tableHeightForRows(td.headerRows, td.bodyRows),
-                      });
+                      setTemplate(t => ({
+                        ...t,
+                        ...("analysisId" in patch
+                          ? {
+                              analysisId: patch.analysisId ?? null,
+                              analysisName: patch.analysisName ?? "",
+                            }
+                          : null),
+                        elements: t.elements.map(el =>
+                          el.id === selected.id
+                            ? {
+                                ...el,
+                                ...patch,
+                                height: tableHeightForRows(td.headerRows, td.bodyRows),
+                              }
+                            : el,
+                        ),
+                      }));
                     }}
                     onTableData={setSelectedTableData}
                   />
@@ -766,6 +960,26 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
           </div>
         </div>
       </div>
+      ) : (
+        <div className="bg-card rounded-2xl border border-border shadow-sm p-10 text-center">
+          <FileText className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
+          <p className="text-[14px] font-semibold text-foreground mb-1">
+            Shablon muharriri yopiq
+          </p>
+          <p className="text-[12px] text-muted-foreground max-w-md mx-auto">
+            Instrumentlar va A4 ko&apos;rinishi <strong>+ Yangi</strong> tugmasi orqali
+            analiz tanlangandan keyin ochiladi. Yoki yuqoridan saqlangan shablonni tanlang.
+          </p>
+          <button
+            type="button"
+            onClick={handleNew}
+            className="mt-5 inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] font-semibold text-white"
+            style={{ background: primaryColor }}
+          >
+            <Plus className="w-4 h-4" /> Yangi shablon
+          </button>
+        </div>
+      )}
 
       <div className="fixed bottom-5 right-5 z-[60] space-y-2">
         {toasts.map(t => (
@@ -788,6 +1002,15 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
         <div className="fixed bottom-5 left-5 z-[60] flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border shadow text-[12px] text-muted-foreground">
           <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analizlar yuklanmoqda...
         </div>
+      )}
+
+      {newModalOpen && (
+        <NewTemplateModal
+          analyses={analyses}
+          primaryColor={primaryColor}
+          onConfirm={handleConfirmNew}
+          onClose={() => setNewModalOpen(false)}
+        />
       )}
     </div>
   );
@@ -890,7 +1113,7 @@ function FreeTableBuilder({
           }}
           className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
         >
-          <option value="">Ixtiyoriy...</option>
+          <option value="">Tanlang...</option>
           {analyses.map(a => (
             <option key={a.id} value={a.id}>
               {a.name} {a.laboratory?.name ? `(${a.laboratory.name})` : ""}
@@ -898,7 +1121,7 @@ function FreeTableBuilder({
           ))}
         </select>
         <p className="text-[10px] text-muted-foreground mt-1">
-          Natijalar sahifasida shablonni analizga moslash uchun
+          Saqlashda `/onlinestorage` analysis_id sifatida yuboriladi
         </p>
       </div>
 

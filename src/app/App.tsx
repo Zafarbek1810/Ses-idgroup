@@ -9,8 +9,16 @@ import {
   clearSession,
   isAuthenticated,
   getStoredUser,
+  setStoredUser,
   type AuthUser,
 } from "@/api/auth";
+import { getUserById } from "@/api/user";
+import { clearPdfTemplatesStorage } from "@/lib/pdfTemplate";
+import {
+  canAccessNav,
+  getAllowedNavIds,
+  getDefaultNavId,
+} from "@/lib/roles";
 import {
   LoginPage,
   DashboardPage,
@@ -111,9 +119,10 @@ type SidebarProps = {
   activeNav: string;
   onNavChange: (id: string) => void;
   primaryColor: string;
+  allowedNavIds: readonly string[];
 };
 
-const Sidebar = ({ collapsed, activeNav, onNavChange, primaryColor }: SidebarProps) => {
+const Sidebar = ({ collapsed, activeNav, onNavChange, primaryColor, allowedNavIds }: SidebarProps) => {
   const [lang, setLang] = useState("Lotin");
   const langs = [
     { id: "Lotin",   short: "Lat" },
@@ -121,8 +130,9 @@ const Sidebar = ({ collapsed, activeNav, onNavChange, primaryColor }: SidebarPro
     { id: "Русский", short: "Рус" },
   ];
 
-  const mainItems = NAV_ITEMS.filter(n => n.section === "main");
-  const sysItems  = NAV_ITEMS.filter(n => n.section === "system");
+  const allowed = new Set(allowedNavIds);
+  const mainItems = NAV_ITEMS.filter(n => n.section === "main" && allowed.has(n.id));
+  const sysItems  = NAV_ITEMS.filter(n => n.section === "system" && allowed.has(n.id));
 
   return (
     <aside
@@ -602,18 +612,54 @@ type DashboardProps = {
 };
 
 const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, onLogout }: DashboardProps) => {
+  const roleName = user?.role?.name ?? null;
+  const allowedNavIds = useMemo(() => getAllowedNavIds(roleName), [roleName]);
+  const defaultNav = useMemo(() => getDefaultNavId(roleName), [roleName]);
+
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState("dashboard");
+  const [activeNav, setActiveNav] = useState(defaultNav);
   const [orderPatientId, setOrderPatientId] = useState<number | null>(null);
 
+  useEffect(() => {
+    if (!canAccessNav(roleName, activeNav)) {
+      setActiveNav(defaultNav);
+      setOrderPatientId(null);
+    }
+  }, [roleName, activeNav, defaultNav]);
+
   const handleNavChange = (id: string) => {
+    if (!canAccessNav(roleName, id)) return;
     setActiveNav(id);
     if (id !== "kassa") setOrderPatientId(null);
   };
 
   const handleGoToOrder = (patientId: number) => {
+    if (!canAccessNav(roleName, "kassa")) return;
     setOrderPatientId(patientId);
     setActiveNav("kassa");
+  };
+
+  const renderPage = () => {
+    if (!canAccessNav(roleName, activeNav)) return null;
+    if (activeNav === "kassa") {
+      return (
+        <OrderPage
+          primaryColor={primaryColor}
+          patientId={orderPatientId}
+          onPatientChange={setOrderPatientId}
+        />
+      );
+    }
+    if (activeNav === "orders") return <OrdersPage primaryColor={primaryColor} />;
+    if (activeNav === "results") return <ResultsPage primaryColor={primaryColor} />;
+    if (activeNav === "patients") {
+      return <PatientsPage primaryColor={primaryColor} onGoToOrder={handleGoToOrder} />;
+    }
+    if (activeNav === "employees") return <EmployeesPage primaryColor={primaryColor} />;
+    if (activeNav === "management") return <ManagementPage primaryColor={primaryColor} />;
+    if (activeNav === "companies") return <CompaniesPage primaryColor={primaryColor} />;
+    if (activeNav === "dashboard") return <DashboardPage primaryColor={primaryColor} />;
+    return null;
   };
 
   return (
@@ -623,6 +669,7 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
         activeNav={activeNav}
         onNavChange={handleNavChange}
         primaryColor={primaryColor}
+        allowedNavIds={allowedNavIds}
       />
       <div className="flex flex-col flex-1 overflow-hidden min-w-0">
         <Header
@@ -636,27 +683,7 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
           user={user}
           onLogout={onLogout}
         />
-        {activeNav === "kassa" ? (
-          <OrderPage
-            primaryColor={primaryColor}
-            patientId={orderPatientId}
-            onPatientChange={setOrderPatientId}
-          />
-        ) : activeNav === "orders" ? (
-          <OrdersPage primaryColor={primaryColor} />
-        ) : activeNav === "results" ? (
-          <ResultsPage primaryColor={primaryColor} />
-        ) : activeNav === "patients" ? (
-          <PatientsPage primaryColor={primaryColor} onGoToOrder={handleGoToOrder} />
-        ) : activeNav === "employees" ? (
-          <EmployeesPage primaryColor={primaryColor} />
-        ) : activeNav === "management" ? (
-          <ManagementPage primaryColor={primaryColor} />
-        ) : activeNav === "companies" ? (
-          <CompaniesPage primaryColor={primaryColor} />
-        ) : (
-          <DashboardPage primaryColor={primaryColor} />
-        )}
+        {renderPage()}
       </div>
     </div>
   );
@@ -672,6 +699,29 @@ export default function App() {
   const [primaryColor, setPrimaryColor] = useState(getStoredPrimaryColor);
   const [darkMode, setDarkMode] = useState<"light" | "dark" | "system">("light");
   const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Ensure role is present for already-authenticated sessions
+  useEffect(() => {
+    if (page !== "dashboard" || !user?.id || user.role?.name) return;
+    let cancelled = false;
+    void getUserById(user.id)
+      .then(full => {
+        if (cancelled) return;
+        const next: AuthUser = {
+          ...user,
+          role: full.role ?? user.role ?? null,
+          company: full.company ?? user.company ?? null,
+        };
+        setStoredUser(next);
+        setUser(next);
+      })
+      .catch(() => {
+        /* role keyinroq yuklanishi mumkin */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [page, user]);
 
   const isDark = useMemo(() => {
     if (darkMode === "dark") return true;
@@ -707,6 +757,7 @@ export default function App() {
 
   const handleLogout = () => {
     clearSession();
+    clearPdfTemplatesStorage();
     setUser(null);
     setPage("login");
   };

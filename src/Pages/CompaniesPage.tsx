@@ -15,7 +15,7 @@ import {
   type CompanyPayload,
 } from "@/api/company";
 import { addUser } from "@/api/user";
-import { getAllRoles, type Role } from "@/api/role";
+import { addRoleWithCompany, extractRoleId } from "@/api/role";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 
@@ -32,7 +32,8 @@ type AdminForm = {
   surname: string;
   email: string;
   password: string;
-  role_id: number | "";
+  role_name: string;
+  role_description: string;
 };
 
 type CreateForm = CompanyForm & AdminForm;
@@ -48,17 +49,11 @@ const EMPTY_ADMIN: AdminForm = {
   surname: "",
   email: "",
   password: "",
-  role_id: "",
+  role_name: "",
+  role_description: "",
 };
 
 const PER_PAGE = 10;
-
-function resolveDefaultAdminRoleId(roles: Role[]): number | "" {
-  const byId = roles.find(r => r.id === 1);
-  if (byId) return byId.id;
-  const byName = roles.find(r => r.name.trim().toLowerCase() === "admin");
-  return byName?.id ?? "";
-}
 
 function CompanyEditModal({
   initial,
@@ -169,13 +164,11 @@ function CompanyEditModal({
 }
 
 function CompanyCreateModal({
-  roles,
   primaryColor,
   saving,
   onSave,
   onClose,
 }: {
-  roles: Role[];
   primaryColor: string;
   saving: boolean;
   onSave: (data: CreateForm) => void;
@@ -184,7 +177,6 @@ function CompanyCreateModal({
   const [form, setForm] = useState<CreateForm>({
     ...EMPTY_COMPANY,
     ...EMPTY_ADMIN,
-    role_id: resolveDefaultAdminRoleId(roles),
   });
   const [showPwd, setShowPwd] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof CreateForm, string>>>({});
@@ -203,7 +195,8 @@ function CompanyCreateModal({
     if (!form.surname.trim()) e.surname = "Familiya kiritilishi shart";
     if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) e.email = "To'g'ri email kiriting";
     if (!form.password || form.password.length < 6) e.password = "Kamida 6 ta belgi kiriting";
-    if (form.role_id === "" || form.role_id == null) e.role_id = "Rol tanlang";
+    if (!form.role_name.trim() || form.role_name.trim().length < 2) e.role_name = "Kamida 2 ta belgi kiriting";
+    if (!form.role_description.trim()) e.role_description = "Rol tavsifi kiritilishi shart";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -221,7 +214,7 @@ function CompanyCreateModal({
           <div>
             <h2 className="font-semibold text-foreground text-[15px]">Yangi tashkilot</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Tashkilot va unga admin xodim birga yaratiladi
+              Tashkilot, rol va admin xodim birga yaratiladi
             </p>
           </div>
           <button onClick={onClose} className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground">
@@ -274,6 +267,36 @@ function CompanyCreateModal({
           <div className="border-t border-border pt-5">
             <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
               <Shield className="w-3.5 h-3.5" />
+              Tashkilot roli
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Rol nomi *</label>
+                <input
+                  type="text"
+                  value={form.role_name}
+                  placeholder="Masalan: director"
+                  onChange={e => set("role_name", e.target.value)}
+                  className={inputCls(errors.role_name)}
+                />
+                {errors.role_name && <p className="text-[11px] text-red-500 mt-1">{errors.role_name}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Rol tavsifi *</label>
+                <input
+                  type="text"
+                  value={form.role_description}
+                  placeholder="Masalan: Bogot tuman director"
+                  onChange={e => set("role_description", e.target.value)}
+                  className={inputCls(errors.role_description)}
+                />
+                {errors.role_description && <p className="text-[11px] text-red-500 mt-1">{errors.role_description}</p>}
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-border pt-5">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
               Admin xodim
             </p>
             <div className="space-y-4">
@@ -334,21 +357,6 @@ function CompanyCreateModal({
                 </div>
                 {errors.password && <p className="text-[11px] text-red-500 mt-1">{errors.password}</p>}
               </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Rol *</label>
-                <select
-                  value={form.role_id === "" ? "" : String(form.role_id)}
-                  onChange={e => set("role_id", e.target.value ? Number(e.target.value) : "")}
-                  className={inputCls(errors.role_id)}
-                >
-                  <option value="">Rol tanlang</option>
-                  {roles.map(r => (
-                    <option key={r.id} value={r.id}>{r.name}</option>
-                  ))}
-                </select>
-                {errors.role_id && <p className="text-[11px] text-red-500 mt-1">{errors.role_id}</p>}
-              </div>
             </div>
           </div>
         </div>
@@ -378,7 +386,6 @@ function CompanyCreateModal({
 
 export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
@@ -422,17 +429,6 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
   };
 
   useEffect(() => {
-    void (async () => {
-      try {
-        const list = await getAllRoles();
-        setRoles(Array.isArray(list) ? list : []);
-      } catch {
-        setRoles([]);
-      }
-    })();
-  }, []);
-
-  useEffect(() => {
     void loadCompanies();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, search]);
@@ -443,7 +439,6 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
   };
 
   const handleCreate = async (form: CreateForm) => {
-    if (form.role_id === "") return;
     setSaving(true);
     try {
       const companyPayload: CompanyPayload = {
@@ -455,7 +450,22 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
       const companyId = extractCompanyId(created);
 
       if (companyId == null) {
-        pushToast("Tashkilot yaratildi, lekin ID topilmadi — admin biriktirilmadi", "error");
+        pushToast("Tashkilot yaratildi, lekin ID topilmadi — rol va admin biriktirilmadi", "error");
+        setModal(null);
+        setPage(1);
+        await loadCompanies({ page: 1 });
+        return;
+      }
+
+      const roleCreated = await addRoleWithCompany({
+        name: form.role_name.trim(),
+        description: form.role_description.trim(),
+        company_id: companyId,
+      });
+      const roleId = extractRoleId(roleCreated);
+
+      if (roleId == null) {
+        pushToast("Tashkilot va rol yaratildi, lekin rol ID topilmadi — admin biriktirilmadi", "error");
         setModal(null);
         setPage(1);
         await loadCompanies({ page: 1 });
@@ -467,11 +477,11 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
         surname: form.surname.trim(),
         email: form.email.trim(),
         password: form.password,
-        role_id: form.role_id,
+        role_id: roleId,
         company_id: companyId,
       });
 
-      pushToast(`"${companyPayload.name}" va admin yaratildi`);
+      pushToast(`"${companyPayload.name}" yaratildi`);
       setModal(null);
       setPage(1);
       await loadCompanies({ page: 1 });
@@ -739,7 +749,6 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
 
       {modal?.type === "add" && (
         <CompanyCreateModal
-          roles={roles}
           primaryColor={primaryColor}
           saving={saving}
           onSave={handleCreate}

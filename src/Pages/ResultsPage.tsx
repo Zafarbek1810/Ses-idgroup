@@ -40,6 +40,7 @@ import {
   A4_PREVIEW_WIDTH,
   A4_WIDTH,
   bodyCellKey,
+  fetchPdfTemplatesFromApi,
   formatDynamicDisplay,
   getActivePdfTemplate,
   headerCellKey,
@@ -181,12 +182,16 @@ function bindTemplateToAnalysis(
   return cloned;
 }
 
-function resolveTemplateForAnalysis(analysisId: number, analysisName: string): PdfTemplate | null {
-  const list = loadPdfTemplates();
+function resolveTemplateForAnalysis(
+  analysisId: number,
+  analysisName: string,
+  list: PdfTemplate[] = loadPdfTemplates(),
+): PdfTemplate | null {
   const active = getActivePdfTemplate();
   const candidates = active ? [active, ...list.filter(t => t.id !== active.id)] : list;
 
   const base =
+    candidates.find(t => t.analysisId === analysisId) ||
     candidates.find(t => t.elements.some(el => el.type === "table" && el.analysisId === analysisId)) ||
     candidates.find(t => t.elements.some(el => el.type === "table")) ||
     active ||
@@ -302,9 +307,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setSelected(row);
     setPdfZoom(PDF_ZOOM_DEFAULT);
     try {
-      const allTemplates = loadPdfTemplates();
+      const allTemplates = await fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]);
       setAvailableTemplates(allTemplates);
-      const tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName);
+      const tpl = resolveTemplateForAnalysis(row.analysisId, row.analysisName, allTemplates);
       setTemplate(tpl);
 
       let order: Order | null = null;

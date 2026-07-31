@@ -7,9 +7,29 @@ import {
 import {
   login as loginApi,
   saveSession,
+  setStoredUser,
   ApiError,
   type AuthUser,
 } from "@/api/auth";
+import { getUserById } from "@/api/user";
+import {
+  clearPdfTemplatesStorage,
+  fetchPdfTemplatesFromApi,
+} from "@/lib/pdfTemplate";
+
+async function resolveUserWithRole(user: AuthUser): Promise<AuthUser> {
+  if (user.role?.name) return user;
+  try {
+    const full = await getUserById(user.id);
+    return {
+      ...user,
+      role: full.role ?? user.role ?? null,
+      company: full.company ?? user.company ?? null,
+    };
+  } catch {
+    return user;
+  }
+}
 
 const PARTICLES = Array.from({ length: 28 }, (_, i) => ({
   id: i,
@@ -51,8 +71,14 @@ export const LoginPage = ({ onLogin }: { onLogin: (user: AuthUser) => void }) =>
     setError(null);
     try {
       const data = await loginApi({ email: trimmedEmail, password });
+      clearPdfTemplatesStorage();
       saveSession(data, remember);
-      const { password: _pw, ...user } = data.user;
+      void fetchPdfTemplatesFromApi().catch(() => {
+        /* shablonlar keyinroq yuklanadi */
+      });
+      const { password: _pw, ...baseUser } = data.user;
+      const user = await resolveUserWithRole(baseUser);
+      setStoredUser(user);
       onLogin(user);
     } catch (err) {
       if (err instanceof ApiError) {

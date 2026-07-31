@@ -1,3 +1,12 @@
+import {
+  addOnlineStorage,
+  deleteOnlineStorage,
+  extractOnlineStorageId,
+  getAllOnlineStorages,
+  updateOnlineStorage,
+  type OnlineStorage,
+} from "@/api/onlineStorage";
+
 export type PdfTextStyle = {
   bold?: boolean;
   italic?: boolean;
@@ -246,6 +255,11 @@ export type PdfTemplate = {
   elements: PdfElement[];
   updatedAt: string;
   createdAt: string;
+  /** Backend `/onlinestorage` record id when persisted remotely */
+  storageId?: number | null;
+  /** Analysis this template belongs to (`/onlinestorage` analysis_id) */
+  analysisId?: number | null;
+  analysisName?: string;
 };
 
 export const PDF_TEMPLATE_STORAGE_KEY = "ses-pdf-templates";
@@ -988,6 +1002,16 @@ export function savePdfTemplates(templates: PdfTemplate[]) {
   localStorage.setItem(PDF_TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
 }
 
+/** Logout / login: company shablonlarini local cache dan tozalash */
+export function clearPdfTemplatesStorage() {
+  try {
+    localStorage.removeItem(PDF_TEMPLATE_STORAGE_KEY);
+    localStorage.removeItem(ACTIVE_PDF_TEMPLATE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function getActiveTemplateId(): string | null {
   try {
     return localStorage.getItem(ACTIVE_PDF_TEMPLATE_KEY);
@@ -1031,4 +1055,175 @@ export function deletePdfTemplate(id: string) {
   if (getActiveTemplateId() === id) {
     setActiveTemplateId(list[0]?.id ?? null);
   }
+}
+
+/** Prefer template-level analysis, then table-bound; used as `/onlinestorage` analysis_id */
+export function resolvePdfTemplateAnalysisId(template: PdfTemplate): number | null {
+  const top = Number(template.analysisId);
+  if (Number.isFinite(top) && top > 0) return top;
+
+  for (const el of template.elements) {
+    if (el.type !== "table") continue;
+    const n = Number(el.analysisId);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
+export function pdfTemplateToStoragePayload(template: PdfTemplate): { elements: PdfElement[] } {
+  return { elements: template.elements };
+}
+
+export function parsePdfTemplateFromStorageText(
+  text: unknown,
+  fallbackName: string,
+): PdfTemplate | null {
+  let parsed: unknown = text;
+  if (typeof text === "string") {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (parsed == null) return null;
+
+  const now = new Date().toISOString();
+
+  // Current format: { elements: [...] }
+  if (typeof parsed === "object" && !Array.isArray(parsed)) {
+    const obj = parsed as Record<string, unknown>;
+    if (Array.isArray(obj.elements)) {
+      const analysisIdRaw = Number(obj.analysisId);
+      return {
+        id: typeof obj.id === "string" && obj.id ? obj.id : createTemplateId(),
+        name:
+          (typeof obj.name === "string" && obj.name.trim()) ||
+          fallbackName ||
+          "PDF shablon",
+        elements: obj.elements as PdfElement[],
+        createdAt: typeof obj.createdAt === "string" ? obj.createdAt : now,
+        updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : now,
+        storageId:
+          typeof obj.storageId === "number" && Number.isFinite(obj.storageId)
+            ? obj.storageId
+            : null,
+        analysisId: Number.isFinite(analysisIdRaw) && analysisIdRaw > 0 ? analysisIdRaw : null,
+        analysisName: typeof obj.analysisName === "string" ? obj.analysisName : "",
+      };
+    }
+  }
+
+  // Legacy: bare elements array
+  if (Array.isArray(parsed)) {
+    return {
+      id: createTemplateId(),
+      name: fallbackName || "PDF shablon",
+      elements: parsed as PdfElement[],
+      createdAt: now,
+      updatedAt: now,
+      storageId: null,
+      analysisId: null,
+      analysisName: "",
+    };
+  }
+
+  return null;
+}
+
+export function onlineStorageRecordToPdfTemplate(
+  record: OnlineStorage,
+): PdfTemplate | null {
+  const tpl = parsePdfTemplateFromStorageText(record.text, record.name);
+  if (!tpl) return null;
+
+  const analysisId =
+    Number(record.analysis_id ?? record.analysisId ?? record.analysis?.id) ||
+    Number(tpl.analysisId) ||
+    null;
+  const analysisName =
+    record.analysis?.name?.trim() || tpl.analysisName?.trim() || "";
+
+  if (analysisId && analysisId > 0) {
+    const table = tpl.elements.find(el => el.type === "table");
+    if (table && !table.analysisId) {
+      table.analysisId = analysisId;
+      if (analysisName) table.analysisName = analysisName;
+    }
+  }
+
+  return {
+    ...tpl,
+    id: `storage-${record.id}`,
+    name: record.name?.trim() || tpl.name,
+    storageId: record.id,
+    analysisId: analysisId && analysisId > 0 ? analysisId : null,
+    analysisName,
+    createdAt: record.createdAt || tpl.createdAt,
+    updatedAt: record.updatedAt || tpl.updatedAt,
+  };
+}
+
+export async function fetchPdfTemplatesFromApi(): Promise<PdfTemplate[]> {
+  const records = await getAllOnlineStorages();
+  const templates = records
+    .map(onlineStorageRecordToPdfTemplate)
+    .filter((t): t is PdfTemplate => t != null);
+
+  // Always mirror API (company-scoped) into session cache — never keep another company's drafts
+  savePdfTemplates(templates);
+
+  const activeId = getActiveTemplateId();
+  if (activeId && !templates.some(t => t.id === activeId)) {
+    setActiveTemplateId(templates[0]?.id ?? null);
+  } else if (!activeId && templates[0]) {
+    setActiveTemplateId(templates[0].id);
+  } else if (templates.length === 0) {
+    setActiveTemplateId(null);
+  }
+
+  return templates;
+}
+
+export async function upsertPdfTemplateRemote(template: PdfTemplate): Promise<PdfTemplate> {
+  const analysisId = resolvePdfTemplateAnalysisId(template);
+  if (analysisId == null) {
+    throw new Error("Shablon uchun analiz tanlang, keyin saqlang");
+  }
+
+  const now = new Date().toISOString();
+  const next: PdfTemplate = {
+    ...template,
+    name: template.name.trim() || "PDF shablon",
+    updatedAt: now,
+    createdAt: template.createdAt || now,
+  };
+
+  const payload = {
+    name: next.name,
+    text: pdfTemplateToStoragePayload(next),
+    analysis_id: analysisId,
+  };
+
+  let storageId = next.storageId ?? null;
+  if (storageId != null && storageId > 0) {
+    await updateOnlineStorage(storageId, payload);
+  } else {
+    const created = await addOnlineStorage(payload);
+    storageId = extractOnlineStorageId(created);
+    if (storageId == null) {
+      throw new Error("Server yangi shablon id qaytarmadi");
+    }
+  }
+
+  const saved: PdfTemplate = { ...next, storageId };
+  upsertPdfTemplate(saved);
+  return saved;
+}
+
+export async function deletePdfTemplateRemote(template: PdfTemplate): Promise<void> {
+  if (template.storageId != null && template.storageId > 0) {
+    await deleteOnlineStorage(template.storageId);
+  }
+  deletePdfTemplate(template.id);
 }

@@ -54,7 +54,7 @@ const NAV_ITEMS = [
   { id: "companies", label: "Tashkilot yaratish", icon: Building2, section: "main" },
   { id: "patients", label: "Ro'yxatga olish", icon: UserPlus, section: "main" },
   { id: "kassa", label: "Kassa", icon: Wallet, section: "main" },
-  { id: "orders", label: "Buyurtmalar", icon: ClipboardList, section: "main" },
+  { id: "orders", label: "Laborant mudiri", icon: ClipboardList, section: "main" },
   { id: "results", label: "Natijalar", icon: FileBarChart2, section: "main" },
   // { id: "employees", label: "Employees", icon: Users, section: "main" },
 ];

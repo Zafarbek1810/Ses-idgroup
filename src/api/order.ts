@@ -131,6 +131,8 @@ export type OrderUpdatePayload = Partial<{
   patient_id: number | null;
   status: OrderStatus;
   payment_status: PaymentStatus;
+  payment_sms: boolean;
+  completed_sms: boolean;
 }>;
 
 function normalizeFullResponse(

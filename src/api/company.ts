@@ -1,10 +1,21 @@
 import { apiRequest } from "./client";
 
+export type CompanyUser = {
+  id: number;
+  username: string;
+  surname: string;
+  email: string;
+  createdAt?: string;
+};
+
 export type Company = {
   id: number;
   name: string;
   description: string;
   address: string;
+  phone: string;
+  active: boolean;
+  user?: CompanyUser[];
   createdAt: string;
 };
 
@@ -12,6 +23,8 @@ export type CompanyPayload = {
   name: string;
   description: string;
   address: string;
+  phone: string;
+  active: boolean;
 };
 
 export type CompaniesFullParams = {

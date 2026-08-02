@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import {
   Plus, Search, X, Edit3, Trash2, RefreshCw, Building2,
   CheckCircle, AlertCircle, Loader2, Eye, EyeOff,
-  ChevronLeft, ChevronsLeft, ChevronsRight, MapPin, Shield,
+  ChevronLeft, ChevronsLeft, ChevronsRight, MapPin,
 } from "lucide-react";
 import {
   getCompaniesFull,
@@ -25,6 +25,8 @@ type CompanyForm = {
   name: string;
   description: string;
   address: string;
+  phone: string;
+  active: boolean;
 };
 
 type AdminForm = {
@@ -32,16 +34,25 @@ type AdminForm = {
   surname: string;
   email: string;
   password: string;
-  role_name: string;
-  role_description: string;
 };
 
 type CreateForm = CompanyForm & AdminForm;
+
+const PHONE_PREFIX = "+998";
+const PHONE_PATTERN = /^\+998\d{9}$/;
+
+function formatPhoneNumber(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  const local = digits.startsWith("998") ? digits.slice(3) : digits;
+  return PHONE_PREFIX + local.slice(0, 9);
+}
 
 const EMPTY_COMPANY: CompanyForm = {
   name: "",
   description: "",
   address: "",
+  phone: PHONE_PREFIX,
+  active: true,
 };
 
 const EMPTY_ADMIN: AdminForm = {
@@ -49,9 +60,9 @@ const EMPTY_ADMIN: AdminForm = {
   surname: "",
   email: "",
   password: "",
-  role_name: "",
-  role_description: "",
 };
+
+const DEFAULT_COMPANY_ROLE = "director";
 
 const PER_PAGE = 10;
 
@@ -81,6 +92,12 @@ function CompanyEditModal({
     if (!form.name.trim() || form.name.trim().length < 2) e.name = "Kamida 2 ta belgi kiriting";
     if (!form.description.trim()) e.description = "Tavsif kiritilishi shart";
     if (!form.address.trim()) e.address = "Manzil kiritilishi shart";
+    const phone = formatPhoneNumber(form.phone);
+    if (phone === PHONE_PREFIX) {
+      e.phone = "Telefon kiritilishi shart";
+    } else if (!PHONE_PATTERN.test(phone)) {
+      e.phone = "Format: +998 dan keyin 9 ta raqam";
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -138,6 +155,62 @@ function CompanyEditModal({
             />
             {errors.address && <p className="text-[11px] text-red-500 mt-1">{errors.address}</p>}
           </div>
+          <div>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">Telefon *</label>
+            <input
+              type="tel"
+              value={form.phone || PHONE_PREFIX}
+              placeholder="+998901234567"
+              onChange={e => set("phone", formatPhoneNumber(e.target.value))}
+              onFocus={e => {
+                if (!form.phone || form.phone === PHONE_PREFIX) {
+                  set("phone", PHONE_PREFIX);
+                }
+                const el = e.currentTarget;
+                requestAnimationFrame(() => {
+                  if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                    el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                  }
+                });
+              }}
+              onKeyDown={e => {
+                const input = e.currentTarget;
+                const start = input.selectionStart ?? 0;
+                const end = input.selectionEnd ?? 0;
+                const touchingPrefix =
+                  start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
+                  e.preventDefault();
+                  input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                }
+              }}
+              className={inputCls(errors.phone)}
+            />
+            {errors.phone && <p className="text-[11px] text-red-500 mt-1">{errors.phone}</p>}
+          </div>
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/50 px-3.5 py-3">
+            <div>
+              <p className="text-xs font-semibold text-foreground">Holat</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {form.active ? "Tashkilot faol" : "Tashkilot faol emas"}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={form.active}
+              onClick={() => set("active", !form.active)}
+              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                form.active ? "bg-emerald-500" : "bg-muted-foreground/30"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                  form.active ? "translate-x-5" : "translate-x-0"
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         <div className="flex gap-3 px-6 pb-6 pt-2 shrink-0 border-t border-border">
@@ -149,7 +222,10 @@ function CompanyEditModal({
             Bekor qilish
           </button>
           <button
-            onClick={() => { if (validate()) onSave(form); }}
+            onClick={() => {
+              if (!validate()) return;
+              onSave({ ...form, phone: formatPhoneNumber(form.phone) });
+            }}
             disabled={saving}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
             style={{ background: primaryColor }}
@@ -191,12 +267,16 @@ function CompanyCreateModal({
     if (!form.name.trim() || form.name.trim().length < 2) e.name = "Kamida 2 ta belgi kiriting";
     if (!form.description.trim()) e.description = "Tavsif kiritilishi shart";
     if (!form.address.trim()) e.address = "Manzil kiritilishi shart";
+    const phone = formatPhoneNumber(form.phone);
+    if (phone === PHONE_PREFIX) {
+      e.phone = "Telefon kiritilishi shart";
+    } else if (!PHONE_PATTERN.test(phone)) {
+      e.phone = "Format: +998 dan keyin 9 ta raqam";
+    }
     if (!form.username.trim() || form.username.trim().length < 2) e.username = "Kamida 2 ta belgi kiriting";
     if (!form.surname.trim()) e.surname = "Familiya kiritilishi shart";
     if (!form.email.trim() || !/\S+@\S+\.\S+/.test(form.email)) e.email = "To'g'ri email kiriting";
     if (!form.password || form.password.length < 6) e.password = "Kamida 6 ta belgi kiriting";
-    if (!form.role_name.trim() || form.role_name.trim().length < 2) e.role_name = "Kamida 2 ta belgi kiriting";
-    if (!form.role_description.trim()) e.role_description = "Rol tavsifi kiritilishi shart";
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -261,36 +341,61 @@ function CompanyCreateModal({
                 />
                 {errors.address && <p className="text-[11px] text-red-500 mt-1">{errors.address}</p>}
               </div>
-            </div>
-          </div>
-
-          <div className="border-t border-border pt-5">
-            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3 flex items-center gap-1.5">
-              <Shield className="w-3.5 h-3.5" />
-              Tashkilot roli
-            </p>
-            <div className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Rol nomi *</label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Telefon *</label>
                 <input
-                  type="text"
-                  value={form.role_name}
-                  placeholder="Masalan: director"
-                  onChange={e => set("role_name", e.target.value)}
-                  className={inputCls(errors.role_name)}
+                  type="tel"
+                  value={form.phone || PHONE_PREFIX}
+                  placeholder="+998901234567"
+                  onChange={e => set("phone", formatPhoneNumber(e.target.value))}
+                  onFocus={e => {
+                    if (!form.phone || form.phone === PHONE_PREFIX) {
+                      set("phone", PHONE_PREFIX);
+                    }
+                    const el = e.currentTarget;
+                    requestAnimationFrame(() => {
+                      if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                        el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                      }
+                    });
+                  }}
+                  onKeyDown={e => {
+                    const input = e.currentTarget;
+                    const start = input.selectionStart ?? 0;
+                    const end = input.selectionEnd ?? 0;
+                    const touchingPrefix =
+                      start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                    if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
+                      e.preventDefault();
+                      input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                    }
+                  }}
+                  className={inputCls(errors.phone)}
                 />
-                {errors.role_name && <p className="text-[11px] text-red-500 mt-1">{errors.role_name}</p>}
+                {errors.phone && <p className="text-[11px] text-red-500 mt-1">{errors.phone}</p>}
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Rol tavsifi *</label>
-                <input
-                  type="text"
-                  value={form.role_description}
-                  placeholder="Masalan: Bogot tuman director"
-                  onChange={e => set("role_description", e.target.value)}
-                  className={inputCls(errors.role_description)}
-                />
-                {errors.role_description && <p className="text-[11px] text-red-500 mt-1">{errors.role_description}</p>}
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/50 px-3.5 py-3">
+                <div>
+                  <p className="text-xs font-semibold text-foreground">Holat</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {form.active ? "Tashkilot faol" : "Tashkilot faol emas"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.active}
+                  onClick={() => set("active", !form.active)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    form.active ? "bg-emerald-500" : "bg-muted-foreground/30"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      form.active ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
               </div>
             </div>
           </div>
@@ -370,7 +475,10 @@ function CompanyCreateModal({
             Bekor qilish
           </button>
           <button
-            onClick={() => { if (validate()) onSave(form); }}
+            onClick={() => {
+              if (!validate()) return;
+              onSave({ ...form, phone: formatPhoneNumber(form.phone) });
+            }}
             disabled={saving}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
             style={{ background: primaryColor }}
@@ -445,6 +553,8 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
         name: form.name.trim(),
         description: form.description.trim(),
         address: form.address.trim(),
+        phone: formatPhoneNumber(form.phone),
+        active: form.active,
       };
       const created = await addCompany(companyPayload);
       const companyId = extractCompanyId(created);
@@ -458,8 +568,8 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
       }
 
       const roleCreated = await addRoleWithCompany({
-        name: form.role_name.trim(),
-        description: form.role_description.trim(),
+        name: DEFAULT_COMPANY_ROLE,
+        description: DEFAULT_COMPANY_ROLE,
         company_id: companyId,
       });
       const roleId = extractRoleId(roleCreated);
@@ -500,6 +610,8 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
         name: form.name.trim(),
         description: form.description.trim(),
         address: form.address.trim(),
+        phone: formatPhoneNumber(form.phone),
+        active: form.active,
       };
       await updateCompany(modal.company.id, payload);
       pushToast(`"${payload.name}" yangilandi`);
@@ -594,7 +706,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-secondary/40">
-                {["Tashkilot", "Manzil", "Tavsif", "Yaratilgan", ""].map((h, i) => (
+                {["Tashkilot", "Telefon", "Manzil", "Holat", "Yaratilgan", ""].map((h, i) => (
                   <th key={i} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-5 py-3 whitespace-nowrap">
                     {h}
                   </th>
@@ -604,7 +716,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-16 text-center">
+                  <td colSpan={6} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 className="w-6 h-6 animate-spin" style={{ color: primaryColor }} />
                       <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
@@ -613,7 +725,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
                 </tr>
               ) : companies.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-16 text-center">
+                  <td colSpan={6} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center">
                         <Building2 className="w-6 h-6 text-muted-foreground" />
@@ -642,9 +754,14 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
                           <div className="text-[13px] font-semibold text-foreground leading-tight">
                             {company.name}
                           </div>
-                          <div className="text-[11px] text-muted-foreground font-mono">#{company.id}</div>
+                          <div className="text-[11px] text-muted-foreground line-clamp-1 max-w-[200px]">
+                            {company.description || "—"}
+                          </div>
                         </div>
                       </div>
+                    </td>
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap font-mono">
+                      {company.phone || "—"}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1.5 text-[12px] text-muted-foreground max-w-[220px]">
@@ -652,8 +769,16 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
                         <span className="truncate">{company.address}</span>
                       </div>
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground max-w-[240px]">
-                      <span className="line-clamp-2">{company.description}</span>
+                    <td className="px-5 py-3.5">
+                      <span
+                        className={`inline-flex items-center rounded-lg px-2 py-1 text-[11px] font-semibold ${
+                          company.active
+                            ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                            : "bg-red-50 text-red-600 dark:bg-red-950/40 dark:text-red-300"
+                        }`}
+                      >
+                        {company.active ? "Faol" : "Faol emas"}
+                      </span>
                     </td>
                     <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
                       {formatDate(company.createdAt)}
@@ -761,6 +886,8 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
             name: modal.company.name,
             description: modal.company.description,
             address: modal.company.address,
+            phone: formatPhoneNumber(modal.company.phone || PHONE_PREFIX),
+            active: modal.company.active ?? true,
           }}
           primaryColor={primaryColor}
           saving={saving}

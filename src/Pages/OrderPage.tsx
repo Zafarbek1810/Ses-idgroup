@@ -7,7 +7,7 @@ import {
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
-import { addOrder, updatePaymentStatus, type PaymentMethod } from "@/api/order";
+import { addOrder, updateOrder, updatePaymentStatus, type PaymentMethod } from "@/api/order";
 import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
@@ -821,11 +821,19 @@ export function OrderPage({
         } catch {
           pushToast("Order yaratildi, lekin to'lov holatini yangilab bo'lmadi", "info");
         }
+
+        if (sendSms) {
+          try {
+            await updateOrder(created.id, { payment_sms: true });
+          } catch {
+            pushToast("Order yaratildi, lekin to'lov SMS yuborib bo'lmadi", "info");
+          }
+        }
       }
 
       pushToast(
-        sendSms
-          ? "Order yaratildi. SMS yuborish belgilandi"
+        paymentPaid && sendSms
+          ? "Order yaratildi. To'lov SMS yuborildi"
           : paymentPaid
             ? "Order yaratildi. To'lov holati: To'langan"
             : "Order muvaffaqiyatli yaratildi",

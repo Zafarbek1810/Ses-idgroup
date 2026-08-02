@@ -19,6 +19,12 @@ type ToastMsg = { id: number; text: string; type: "success" | "error" };
 
 const EMPTY_FORM: RolePayload = { name: "", description: "" };
 
+const RESERVED_ROLE_NAMES = new Set(["director", "admin"]);
+
+function isReservedRoleName(name: string): boolean {
+  return RESERVED_ROLE_NAMES.has(name.trim().toLowerCase());
+}
+
 function RoleFormModal({
   mode,
   initial,
@@ -44,7 +50,12 @@ function RoleFormModal({
 
   const validate = () => {
     const e: typeof errors = {};
-    if (!form.name.trim() || form.name.trim().length < 2) e.name = "Kamida 2 ta belgi kiriting";
+    const name = form.name.trim();
+    if (!name || name.length < 2) {
+      e.name = "Kamida 2 ta belgi kiriting";
+    } else if (isReservedRoleName(name)) {
+      e.name = `"${name}" roli tizim tomonidan band — boshqa nom tanlang`;
+    }
     if (!form.description.trim()) e.description = "Tavsif kiritilishi shart";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -74,7 +85,7 @@ function RoleFormModal({
             <input
               type="text"
               value={form.name}
-              placeholder="Masalan: Admin"
+              placeholder="Masalan: inspector"
               onChange={e => set("name", e.target.value)}
               className={`w-full bg-secondary border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none ${
                 errors.name ? "border-red-400" : "border-border focus:border-[var(--primary)]"
@@ -168,6 +179,10 @@ export function RolesSection({ primaryColor }: { primaryColor: string }) {
 
   const handleSave = async (form: RolePayload) => {
     if (!modal || (modal.type !== "add" && modal.type !== "edit")) return;
+    if (isReservedRoleName(form.name)) {
+      pushToast(`"${form.name.trim()}" roli yaratib yoki o'zgartirib bo'lmaydi`, "error");
+      return;
+    }
     setSaving(true);
     try {
       if (modal.type === "add") {

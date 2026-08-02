@@ -40,7 +40,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       // Dev: frontend → Vite proxy → VITE_API_BASE_URL (.env)
-      port: 5555,
+      port: 5173,
       proxy,
     },
 

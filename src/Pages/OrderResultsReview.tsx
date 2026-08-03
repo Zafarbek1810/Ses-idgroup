@@ -4,6 +4,7 @@ import {
   ArrowLeft, CheckCircle, AlertCircle, FileText, Loader2, ShieldCheck, Link2,
 } from "lucide-react";
 import { buildShowResultUrl } from "@/lib/showResultLink";
+import { copyTextToClipboard } from "@/lib/copyText";
 import {
   getOrderById,
   resolveOrderItemAnalysisId,
@@ -485,10 +486,10 @@ export function OrderResultsReview({
                         analysisId: active.analysisId,
                         storageId: active.template!.storageId!,
                       });
-                      void navigator.clipboard.writeText(url).then(
-                        () => pushToast("Natija linki nusxalandi"),
-                        () => pushToast(url, "info"),
-                      );
+                      void copyTextToClipboard(url).then(ok => {
+                        if (ok) pushToast("Natija linki nusxalandi");
+                        else pushToast(url, "info");
+                      });
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-border bg-secondary hover:opacity-90"
                   >

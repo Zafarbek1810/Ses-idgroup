@@ -29,7 +29,12 @@ import {
   OrderPage,
   OrdersPage,
   ResultsPage,
+  ShowResultPage,
 } from "@/Pages";
+import {
+  isShowResultRoute,
+  parseShowResultParams,
+} from "@/lib/showResultLink";
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
@@ -692,6 +697,12 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
 // ─── App Root ─────────────────────────────────────────────────────────────────
 
 export default function App() {
+  const showResultParams = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    if (!isShowResultRoute(window.location.pathname)) return null;
+    return parseShowResultParams(window.location.pathname, window.location.search);
+  }, []);
+
   const [page, setPage] = useState<"login" | "dashboard">(() =>
     isAuthenticated() ? "dashboard" : "login",
   );
@@ -761,6 +772,33 @@ export default function App() {
     setUser(null);
     setPage("login");
   };
+
+  const onShowResultRoute = isShowResultRoute();
+
+  if (onShowResultRoute && showResultParams) {
+    return (
+      <>
+        <GlobalStyles />
+        <ShowResultPage params={showResultParams} />
+      </>
+    );
+  }
+
+  if (onShowResultRoute && !showResultParams) {
+    return (
+      <>
+        <GlobalStyles />
+        <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
+          <div className="max-w-md rounded-xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+            <p className="text-sm font-medium text-slate-900">Noto&apos;g&apos;ri havola</p>
+            <p className="mt-2 text-sm text-slate-600">
+              Format: /showresult/{"{orderId}"}/{"{analysisId}"}/{"{storageId}"}
+            </p>
+          </div>
+        </div>
+      </>
+    );
+  }
 
   return (
     <>

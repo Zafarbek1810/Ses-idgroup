@@ -7,3 +7,4 @@ export { PatientsPage } from "./PatientsPage";
 export { OrderPage } from "./OrderPage";
 export { OrdersPage } from "./OrdersPage";
 export { ResultsPage } from "./ResultsPage";
+export { ShowResultPage } from "./ShowResultPage";

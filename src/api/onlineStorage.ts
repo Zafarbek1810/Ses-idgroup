@@ -150,10 +150,26 @@ export async function getOnlineStoragesFull(
   return normalizeFullResponse(raw, params);
 }
 
-export function getOnlineStorageById(id: number) {
+export function getOnlineStorageById(id: number, options?: { auth?: boolean }) {
   return apiRequest<OnlineStorage>(`/onlinestorage/getby/${id}`, {
     method: "GET",
+    auth: options?.auth ?? true,
     fallbackError: "PDF shablonni yuklab bo'lmadi",
+  }).then(raw => {
+    const analysis_id = resolveOnlineStorageAnalysisId(raw);
+    return analysis_id != null ? { ...raw, analysis_id } : raw;
+  });
+}
+
+/** SMS / public link — token talab qilinmaydi */
+export function getOnlineStorageByIdTwo(id: number) {
+  return apiRequest<OnlineStorage>(`/onlinestorage/getbytwo/${id}`, {
+    method: "GET",
+    auth: false,
+    fallbackError: "PDF shablonni yuklab bo'lmadi",
+  }).then(raw => {
+    const analysis_id = resolveOnlineStorageAnalysisId(raw);
+    return analysis_id != null ? { ...raw, analysis_id } : raw;
   });
 }
 

@@ -133,6 +133,8 @@ export type OrderUpdatePayload = Partial<{
   payment_status: PaymentStatus;
   payment_sms: boolean;
   completed_sms: boolean;
+  /** SMS dagi natija PDF havolasi (public /showresult/...) */
+  result_link_sms: string;
 }>;
 
 function normalizeFullResponse(
@@ -203,9 +205,19 @@ export async function getOrdersFull(
   return normalizeFullResponse(raw, params);
 }
 
-export function getOrderById(id: number) {
+export function getOrderById(id: number, options?: { auth?: boolean }) {
   return apiRequest<Order>(`/order/getby/${id}`, {
     method: "GET",
+    auth: options?.auth ?? true,
+    fallbackError: "Buyurtmani yuklab bo'lmadi",
+  });
+}
+
+/** SMS / public link — token talab qilinmaydi */
+export function getOrderByIdTwo(id: number) {
+  return apiRequest<Order>(`/order/getbytwo/${id}`, {
+    method: "GET",
+    auth: false,
     fallbackError: "Buyurtmani yuklab bo'lmadi",
   });
 }

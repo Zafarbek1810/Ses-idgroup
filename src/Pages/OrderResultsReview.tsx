@@ -1,8 +1,9 @@
 import * as React from "react";
 import { useEffect, useState } from "react";
 import {
-  ArrowLeft, CheckCircle, AlertCircle, FileText, Loader2, ShieldCheck,
+  ArrowLeft, CheckCircle, AlertCircle, FileText, Loader2, ShieldCheck, Link2,
 } from "lucide-react";
+import { buildShowResultUrl } from "@/lib/showResultLink";
 import {
   getOrderById,
   resolveOrderItemAnalysisId,
@@ -267,9 +268,23 @@ export function OrderResultsReview({
         }
       }
 
+      const resultLinks = views
+        .filter(v => v.template?.storageId != null && v.template.storageId > 0)
+        .map(v =>
+          buildShowResultUrl({
+            orderId: order.id,
+            analysisId: v.analysisId,
+            storageId: v.template!.storageId!,
+          }),
+        );
+      const result_link_sms = resultLinks[0] ?? "";
+
       let smsOk = true;
       try {
-        await updateOrder(order.id, { completed_sms: true });
+        await updateOrder(order.id, {
+          completed_sms: true,
+          ...(result_link_sms ? { result_link_sms } : {}),
+        });
       } catch {
         smsOk = false;
       }
@@ -461,6 +476,26 @@ export function OrderResultsReview({
                     {active.hasSavedValues ? " · Natija saqlangan" : " · Natija kiritilmagan"}
                   </p>
                 </div>
+                {active.template?.storageId != null && active.template.storageId > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const url = buildShowResultUrl({
+                        orderId,
+                        analysisId: active.analysisId,
+                        storageId: active.template!.storageId!,
+                      });
+                      void navigator.clipboard.writeText(url).then(
+                        () => pushToast("Natija linki nusxalandi"),
+                        () => pushToast(url, "info"),
+                      );
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] font-semibold border border-border bg-secondary hover:opacity-90"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                    SMS link
+                  </button>
+                )}
               </div>
 
               {!active.template ? (

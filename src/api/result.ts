@@ -150,21 +150,45 @@ function normalizeList(raw: unknown): ResultRecord[] {
     .filter((r): r is ResultRecord => r != null && Number.isFinite(Number(r.id)));
 }
 
-export async function getAllResults() {
+export async function getAllResults(options?: { auth?: boolean }) {
   const raw = await apiRequest<unknown>("/result/getall", {
     method: "GET",
+    auth: options?.auth ?? true,
     fallbackError: "Natijalarni yuklab bo'lmadi",
   });
   return normalizeList(raw);
 }
 
-export async function getResultById(id: number) {
+export async function getResultById(id: number, options?: { auth?: boolean }) {
   const raw = await apiRequest<unknown>(`/result/getby/${id}`, {
     method: "GET",
+    auth: options?.auth ?? true,
     fallbackError: "Natijani yuklab bo'lmadi",
   });
   const normalized = normalizeResultRecord(raw);
   if (!normalized) {
+    throw new Error("Natijani yuklab bo'lmadi");
+  }
+  return normalized;
+}
+
+/**
+ * SMS / public link — token talab qilinmaydi.
+ * `:id` — buyurtma (order) id; natija shu order bo'yicha qaytadi.
+ */
+export async function getResultByIdTwo(orderId: number) {
+  const raw = await apiRequest<unknown>(`/result/getbytwo/${orderId}`, {
+    method: "GET",
+    auth: false,
+    fallbackError: "Natijani yuklab bo'lmadi",
+  });
+  const normalized = normalizeResultRecord(raw);
+  if (!normalized) {
+    // Ba'zan API { data: [...] } yoki list qaytarishi mumkin
+    const list = normalizeList(raw);
+    const byOrder = findResultByOrderId(list, orderId);
+    if (byOrder) return byOrder;
+    if (list[0]) return list[0];
     throw new Error("Natijani yuklab bo'lmadi");
   }
   return normalized;

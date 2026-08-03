@@ -1,7 +1,8 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
-import { AlertCircle, FileText, Loader2 } from "lucide-react";
-import { ApiError } from "@/api/client";
+import { useEffect, useRef, useState } from "react";
+import { AlertCircle, Download, FileText, Loader2 } from "lucide-react";
+import html2canvas from "html2canvas-pro";
+import { jsPDF } from "jspdf";
 import {
   getOnlineStorageByIdTwo,
   resolveOnlineStorageAnalysisId,
@@ -21,8 +22,10 @@ import {
 } from "@/api/result";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
 import {
+  A4_HEIGHT,
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
+  A4_WIDTH,
   bodyCellKey,
   headerCellKey,
   isDynamicCell,
@@ -35,7 +38,7 @@ import type { ShowResultParams } from "@/lib/showResultLink";
 
 type LoadState =
   | { status: "loading" }
-  | { status: "error"; message: string }
+  | { status: "error" }
   | {
       status: "ready";
       template: PdfTemplate;
@@ -101,6 +104,9 @@ function labDoctorFromResult(result: ResultRecord | null): string | null {
 
 export function ShowResultPage({ params }: { params: ShowResultParams }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,19 +187,9 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
             analysisName,
           });
         }
-      } catch (err) {
+      } catch {
         if (cancelled) return;
-        let message =
-          err instanceof ApiError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : "Natijani yuklab bo'lmadi";
-        if (err instanceof ApiError && err.status === 404) {
-          message =
-            "Public API topilmadi (getbytwo). Backendda /order|result|onlinestorage/getbytwo/:id routelarini yoqing.";
-        }
-        setState({ status: "error", message });
+        setState({ status: "error" });
       }
     };
 
@@ -202,6 +198,84 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
       cancelled = true;
     };
   }, [params.orderId, params.analysisId, params.storageId]);
+
+  const handleDownloadPdf = async () => {
+    if (state.status !== "ready" || downloading) return;
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      const el = pdfRef.current;
+      if (!el) {
+        throw new Error("PDF element topilmadi");
+      }
+
+      const captureScale = 2;
+      const canvas = await html2canvas(el, {
+        scale: captureScale,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: "#ffffff",
+        logging: false,
+        onclone: (_doc, cloned) => {
+          const border = `${1 / captureScale}px solid #000`;
+          cloned.querySelectorAll("table").forEach(t => {
+            const table = t as HTMLElement;
+            table.style.border = "none";
+            table.style.borderCollapse = "collapse";
+            table.style.borderSpacing = "0";
+          });
+          cloned.querySelectorAll("th, td").forEach(cell => {
+            const node = cell as HTMLElement;
+            node.style.border = border;
+            node.style.outline = "none";
+            node.style.boxShadow = "none";
+          });
+        },
+      });
+
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "pt",
+        format: [A4_WIDTH, A4_HEIGHT],
+      });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgData = canvas.toDataURL("image/png");
+
+      let imgW = pageW;
+      let imgH = (canvas.height * imgW) / canvas.width;
+
+      if (imgH <= pageH * 1.02) {
+        const fit = Math.min(1, pageH / imgH);
+        imgW *= fit;
+        imgH *= fit;
+        pdf.addImage(imgData, "PNG", (pageW - imgW) / 2, 0, imgW, imgH);
+      } else {
+        let heightLeft = imgH;
+        let position = 0;
+        pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+        heightLeft -= pageH;
+        while (heightLeft > pageH * 0.02) {
+          position = heightLeft - imgH;
+          pdf.addPage();
+          pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
+          heightLeft -= pageH;
+        }
+      }
+
+      const safeName = state.analysisName
+        .replace(/[^\w\u0400-\u04FF\u0500-\u052F\-]+/g, "_")
+        .replace(/_+/g, "_")
+        .slice(0, 60);
+      pdf.save(`natija_${params.orderId}_${safeName || "analiz"}.pdf`);
+    } catch (err) {
+      setDownloadError(
+        err instanceof Error ? err.message : "PDF yuklab bo'lmadi",
+      );
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const grid =
     state.status === "ready"
@@ -219,21 +293,45 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-5xl items-center gap-3 px-4 py-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600">
-            <FileText className="h-5 w-5" />
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-3 px-4 py-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-sky-500/10 text-sky-600">
+              <FileText className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-sm font-semibold tracking-tight">SES — tahlil natijasi</p>
+              <p className="truncate text-xs text-slate-500">
+                Buyurtma #{params.orderId}
+                {state.status === "ready" ? ` · ${state.analysisName}` : ""}
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-sm font-semibold tracking-tight">SES — tahlil natijasi</p>
-            <p className="text-xs text-slate-500">
-              Buyurtma #{params.orderId}
-              {state.status === "ready" ? ` · ${state.analysisName}` : ""}
-            </p>
-          </div>
+
+          {state.status === "ready" && (
+            <button
+              type="button"
+              onClick={() => void handleDownloadPdf()}
+              disabled={downloading}
+              className="inline-flex shrink-0 items-center gap-2 rounded-lg bg-sky-600 px-3.5 py-2 text-[13px] font-semibold text-white shadow-sm hover:bg-sky-700 disabled:opacity-60"
+            >
+              {downloading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
+              {downloading ? "Yuklanmoqda..." : "Yuklab olish"}
+            </button>
+          )}
         </div>
       </header>
 
       <main className="mx-auto max-w-5xl px-4 py-6">
+        {downloadError && (
+          <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {downloadError}
+          </div>
+        )}
+
         {state.status === "loading" && (
           <div className="flex flex-col items-center justify-center gap-3 py-24 text-slate-500">
             <Loader2 className="h-8 w-8 animate-spin text-sky-500" />
@@ -245,22 +343,38 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
           <div className="mx-auto max-w-md rounded-xl border border-red-200 bg-white p-6 text-center shadow-sm">
             <AlertCircle className="mx-auto mb-3 h-8 w-8 text-red-500" />
             <p className="text-sm font-medium text-slate-900">Natijani ochib bo&apos;lmadi</p>
-            <p className="mt-2 text-sm text-slate-600">{state.message}</p>
           </div>
         )}
 
         {state.status === "ready" && (
-          <div className="flex justify-center overflow-auto pb-8">
-            <div
-              className="shadow-lg ring-1 ring-slate-200"
-              style={{ width: A4_PREVIEW_WIDTH, minHeight: previewPageHeight }}
+          <div className="flex flex-col items-center gap-4 pb-8">
+            <button
+              type="button"
+              onClick={() => void handleDownloadPdf()}
+              disabled={downloading}
+              className="inline-flex items-center gap-2 rounded-xl bg-sky-600 px-5 py-3 text-[14px] font-bold text-white shadow-md hover:bg-sky-700 disabled:opacity-60 sm:hidden"
             >
-              <ResultPdfCanvas
-                template={state.template}
-                fillValues={state.fillValues}
-                dynamicCtx={state.dynamicCtx}
-                readOnly
-              />
+              {downloading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Download className="h-5 w-5" />
+              )}
+              PDF yuklab olish
+            </button>
+
+            <div className="overflow-auto">
+              <div
+                className="shadow-lg ring-1 ring-slate-200"
+                style={{ width: A4_PREVIEW_WIDTH, minHeight: previewPageHeight }}
+              >
+                <ResultPdfCanvas
+                  ref={pdfRef}
+                  template={state.template}
+                  fillValues={state.fillValues}
+                  dynamicCtx={state.dynamicCtx}
+                  readOnly
+                />
+              </div>
             </div>
           </div>
         )}

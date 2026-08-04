@@ -6,6 +6,15 @@ import {
   updateOnlineStorage,
   type OnlineStorage,
 } from "@/api/onlineStorage";
+import {
+  addGlobalStorage,
+  deleteGlobalStorage,
+  extractGlobalStorageId,
+  getAllGlobalStorages,
+  updateGlobalStorage,
+  type GlobalStorage,
+} from "@/api/globalStorage";
+import { getStoredCompanyId } from "@/api/session";
 
 export type PdfTextStyle = {
   bold?: boolean;
@@ -34,12 +43,13 @@ export type PdfDynamicFieldKey =
   | "patient_birth_day"
   | "patient_phone"
   | "lab_doctor"
+  | "lab_assistant"
   | "analysis_name"
   | "laboratory_name";
 
 export type PdfDynamicFieldDef = {
   key: PdfDynamicFieldKey;
-  /** Cyrillic label as on official form */
+  /** Lotincha yorliq (PDF shablonda ko'rinadi) */
   label: string;
   /** Sample preview value in template editor */
   sample: string;
@@ -49,61 +59,67 @@ export type PdfDynamicFieldDef = {
 export const DYNAMIC_FIELDS: PdfDynamicFieldDef[] = [
   {
     key: "order_number",
-    label: "Мижоз тартиб рақами",
+    label: "Mijoz tartib raqami",
     sample: "Raqam #",
     hint: "Buyurtma raqami",
   },
   {
     key: "order_created_at",
-    label: "Мурожаат",
+    label: "Murojaat",
     sample: "Sanasi/vaqti",
     hint: "Murojaat sanasi/vaqti",
   },
   {
     key: "patient_full_name",
-    label: "Мижоз Ф.И.Ш.",
+    label: "Mijoz F.I.Sh.",
     sample: "Familiya Ismi Sharif",
     hint: "Bemor F.I.Sh.",
   },
   {
     key: "result_date",
-    label: "Натижа",
+    label: "Natija",
     sample: "Sanasi/vaqti",
     hint: "Natija sanasi/vaqti",
   },
   {
     key: "patient_address",
-    label: "Яшаш манзили",
+    label: "Yashash manzili",
     sample: "Manzil",
     hint: "Yashash manzili",
   },
   {
     key: "patient_birth_day",
-    label: "Туғилган санаси",
+    label: "Tug'ilgan sanasi",
     sample: "Sanasi/vaqti",
     hint: "Tug'ilgan sana",
   },
   {
     key: "patient_phone",
-    label: "Телефон рақами",
+    label: "Telefon raqami",
     sample: "Raqam #",
     hint: "Telefon raqami",
   },
   {
     key: "lab_doctor",
-    label: "Врач лаборант",
+    label: "Vrach laborant",
     sample: "Laborant / direktor",
     hint: "Laborant / direktor",
   },
   {
+    key: "lab_assistant",
+    label: "Laboratoriya assistenti",
+    sample: "Assistent F.I.Sh.",
+    hint: "Laboratoriya assistenti",
+  },
+  {
     key: "analysis_name",
-    label: "Анализ",
+    label: "Analiz",
     sample: "Analiz nomi",
     hint: "Analiz nomi",
   },
   {
     key: "laboratory_name",
-    label: "Лаборатория",
+    label: "Laboratoriya",
     sample: "Laboratoriya nomi",
     hint: "Laboratoriya nomi",
   },
@@ -123,6 +139,7 @@ export type PdfDynamicContext = {
   patientBirthDay?: string | null;
   patientPhone?: string | null;
   labDoctor?: string | null;
+  labAssistant?: string | null;
   analysisName?: string | null;
   laboratoryName?: string | null;
 };
@@ -175,6 +192,8 @@ export function resolveDynamicValue(
       return pick(ctx.patientPhone);
     case "lab_doctor":
       return pick(ctx.labDoctor);
+    case "lab_assistant":
+      return pick(ctx.labAssistant);
     case "analysis_name":
       return pick(ctx.analysisName);
     case "laboratory_name":
@@ -257,6 +276,11 @@ export type PdfTemplate = {
   createdAt: string;
   /** Backend `/onlinestorage` record id when persisted remotely */
   storageId?: number | null;
+  /** Backend `/globalstorage` record id when persisted globally */
+  globalStorageId?: number | null;
+  /** Company that published this global template (if known) */
+  companyId?: number | null;
+  companyName?: string;
   /** Analysis this template belongs to (`/onlinestorage` analysis_id) */
   analysisId?: number | null;
   analysisName?: string;
@@ -271,13 +295,17 @@ export const A4_HEIGHT = 842;
 export const A4_PREVIEW_SCALE = 0.72;
 export const A4_PREVIEW_WIDTH = Math.round(A4_WIDTH * A4_PREVIEW_SCALE);
 export const A4_PREVIEW_HEIGHT = Math.round(A4_HEIGHT * A4_PREVIEW_SCALE);
+/** Soft cap for very long templates (keeps editor usable) */
+export const PDF_MAX_PAGES = 10;
+/** Top/bottom margin on each printed page (pt) so table splits aren't flush to edges */
+export const PDF_PAGE_MARGIN = 44;
 
 const MIN_TABLE_COLS = 1;
 const MAX_TABLE_COLS = 12;
 const MIN_HEADER_ROWS = 1;
 const MAX_HEADER_ROWS = 6;
 const MIN_BODY_ROWS = 0;
-const MAX_BODY_ROWS = 40;
+const MAX_BODY_ROWS = 80;
 const MIN_COL_WIDTH_PCT = 5;
 
 export function emptyTableCell(
@@ -838,6 +866,60 @@ export function tableHeightForRows(headerRows: number, bodyRows: number, compact
   return Math.max(80, headerRows * h + Math.max(bodyRows, 1) * b + 8);
 }
 
+/** Effective painted height of an element (tables grow with row count). */
+export function getElementRenderHeight(el: PdfElement): number {
+  if (el.type === "table") {
+    const grid = normalizeTableData(el.tableData);
+    return Math.max(el.height, tableHeightForRows(grid.headerRows, grid.bodyRows, true));
+  }
+  return el.height;
+}
+
+/** Lowest Y (A4 points) occupied by template content. */
+export function getPdfContentBottom(template: PdfTemplate): number {
+  let bottom = 0;
+  for (const el of template.elements) {
+    bottom = Math.max(bottom, el.y + getElementRenderHeight(el));
+  }
+  return bottom;
+}
+
+/** Content area height inside one A4 page (excludes top/bottom margins when enabled). */
+export function getPdfUsablePageHeight(withMargins = false): number {
+  if (!withMargins) return A4_HEIGHT;
+  return Math.max(120, A4_HEIGHT - 2 * PDF_PAGE_MARGIN);
+}
+
+export function getPdfPageMarginPreview(): number {
+  return PDF_PAGE_MARGIN * A4_PREVIEW_SCALE;
+}
+
+export function getPdfUsablePreviewHeight(withMargins = false): number {
+  if (!withMargins) return A4_PREVIEW_HEIGHT;
+  return A4_PREVIEW_HEIGHT - 2 * getPdfPageMarginPreview();
+}
+
+/**
+ * How many A4 pages the template needs (at least 1).
+ * withMargins=true — used for result preview/export so content doesn't touch page edges.
+ */
+export function getPdfPageCount(template: PdfTemplate, withMargins = false): number {
+  const bottom = getPdfContentBottom(template);
+  if (bottom <= 0) return 1;
+  const usable = getPdfUsablePageHeight(withMargins);
+  return Math.max(1, Math.min(PDF_MAX_PAGES, Math.ceil(bottom / usable - 0.001)));
+}
+
+/** Full document height in A4 points (N × A4). */
+export function getPdfDocumentHeight(template: PdfTemplate, withMargins = false): number {
+  return getPdfPageCount(template, withMargins) * A4_HEIGHT;
+}
+
+/** Full document height in preview pixels (exact N × A4 preview). */
+export function getPdfPreviewHeight(template: PdfTemplate, withMargins = false): number {
+  return getPdfPageCount(template, withMargins) * A4_PREVIEW_HEIGHT;
+}
+
 function clampInt(n: number, min: number, max: number) {
   const v = Math.round(Number(n));
   if (!Number.isFinite(v)) return min;
@@ -942,7 +1024,7 @@ export function createPdfElement(
     id: createElementId(),
     type,
     x: Math.max(0, Math.min(x, A4_WIDTH - size.width)),
-    y: Math.max(0, Math.min(y, A4_HEIGHT - 20)),
+    y: Math.max(0, Math.min(y, A4_HEIGHT * PDF_MAX_PAGES - 20)),
     width: size.width,
     height: size.height,
     content: def?.label ?? defaultContentForType(type),
@@ -1108,6 +1190,10 @@ export function parsePdfTemplateFromStorageText(
           typeof obj.storageId === "number" && Number.isFinite(obj.storageId)
             ? obj.storageId
             : null,
+        globalStorageId:
+          typeof obj.globalStorageId === "number" && Number.isFinite(obj.globalStorageId)
+            ? obj.globalStorageId
+            : null,
         analysisId: Number.isFinite(analysisIdRaw) && analysisIdRaw > 0 ? analysisIdRaw : null,
         analysisName: typeof obj.analysisName === "string" ? obj.analysisName : "",
       };
@@ -1226,4 +1312,114 @@ export async function deletePdfTemplateRemote(template: PdfTemplate): Promise<vo
     await deleteOnlineStorage(template.storageId);
   }
   deletePdfTemplate(template.id);
+}
+
+export function globalStorageRecordToPdfTemplate(
+  record: GlobalStorage,
+): PdfTemplate | null {
+  const tpl = parsePdfTemplateFromStorageText(record.text, record.name);
+  if (!tpl) return null;
+
+  const analysisId =
+    Number(record.analysis_id ?? record.analysisId ?? record.analysis?.id) ||
+    Number(tpl.analysisId) ||
+    null;
+  const analysisName =
+    record.analysis?.name?.trim() || tpl.analysisName?.trim() || "";
+  const companyId =
+    Number(record.company_id ?? record.companyId ?? record.company?.id) || null;
+  const companyName = record.company?.name?.trim() || tpl.companyName?.trim() || "";
+
+  if (analysisId && analysisId > 0) {
+    const table = tpl.elements.find(el => el.type === "table");
+    if (table && !table.analysisId) {
+      table.analysisId = analysisId;
+      if (analysisName) table.analysisName = analysisName;
+    }
+  }
+
+  return {
+    ...tpl,
+    id: `global-${record.id}`,
+    name: record.name?.trim() || tpl.name,
+    storageId: null,
+    globalStorageId: record.id,
+    companyId: companyId && companyId > 0 ? companyId : null,
+    companyName,
+    analysisId: analysisId && analysisId > 0 ? analysisId : null,
+    analysisName,
+    createdAt: record.createdAt || tpl.createdAt,
+    updatedAt: record.updatedAt || tpl.updatedAt,
+  };
+}
+
+/** Clone a global template so PDF tab can save it into this company's online storage */
+export function cloneGlobalTemplateForLocalEdit(template: PdfTemplate): PdfTemplate {
+  const now = new Date().toISOString();
+  const cloned = structuredClone(template);
+  return {
+    ...cloned,
+    id: createTemplateId(),
+    storageId: null,
+    globalStorageId: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export async function fetchGlobalPdfTemplates(): Promise<PdfTemplate[]> {
+  const records = await getAllGlobalStorages();
+  return records
+    .map(globalStorageRecordToPdfTemplate)
+    .filter((t): t is PdfTemplate => t != null);
+}
+
+export async function upsertPdfTemplateGlobal(template: PdfTemplate): Promise<PdfTemplate> {
+  const analysisId = resolvePdfTemplateAnalysisId(template);
+  if (analysisId == null) {
+    throw new Error("Shablon uchun analiz tanlang, keyin saqlang");
+  }
+
+  const companyId = getStoredCompanyId();
+  if (companyId == null) {
+    throw new Error("Kompaniya aniqlanmadi — qayta kiring");
+  }
+
+  const now = new Date().toISOString();
+  const next: PdfTemplate = {
+    ...template,
+    name: template.name.trim() || "PDF shablon",
+    updatedAt: now,
+    createdAt: template.createdAt || now,
+  };
+
+  const payload = {
+    name: next.name,
+    text: pdfTemplateToStoragePayload(next),
+    analysis_id: analysisId,
+    company_id: companyId,
+  };
+
+  let globalStorageId = next.globalStorageId ?? null;
+  if (globalStorageId != null && globalStorageId > 0) {
+    await updateGlobalStorage(globalStorageId, payload);
+  } else {
+    const created = await addGlobalStorage(payload);
+    globalStorageId = extractGlobalStorageId(created);
+    if (globalStorageId == null) {
+      throw new Error("Server yangi global shablon id qaytarmadi");
+    }
+  }
+
+  return {
+    ...next,
+    globalStorageId,
+    companyId,
+  };
+}
+
+export async function deletePdfTemplateGlobal(template: PdfTemplate): Promise<void> {
+  if (template.globalStorageId != null && template.globalStorageId > 0) {
+    await deleteGlobalStorage(template.globalStorageId);
+  }
 }

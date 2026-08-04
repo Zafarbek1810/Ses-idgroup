@@ -39,7 +39,7 @@ export type UserUpdatePayload = {
   username: string;
   surname: string;
   email: string;
-  role_id: number;
+  role_id?: number;
   password?: string;
   company_id?: number;
 };

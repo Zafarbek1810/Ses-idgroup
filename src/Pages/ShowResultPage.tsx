@@ -1,8 +1,6 @@
 import * as React from "react";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Download, FileText, Loader2 } from "lucide-react";
-import html2canvas from "html2canvas-pro";
-import { jsPDF } from "jspdf";
 import {
   getOnlineStorageByIdTwo,
   resolveOnlineStorageAnalysisId,
@@ -21,12 +19,12 @@ import {
   type ResultRecord,
 } from "@/api/result";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
+import { downloadElementAsPdf } from "@/lib/pdfExport";
 import {
-  A4_HEIGHT,
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
-  A4_WIDTH,
   bodyCellKey,
+  getPdfPreviewHeight,
   headerCellKey,
   isDynamicCell,
   normalizeTableData,
@@ -98,6 +96,19 @@ function labDoctorFromResult(result: ResultRecord | null): string | null {
   if (!d) return null;
   const initial = (d.username || "").charAt(0).toUpperCase();
   const surname = d.surname || "";
+  const name = `${initial}.${surname}`.replace(/^\./, "").replace(/\.$/, "");
+  return name || null;
+}
+
+function labAssistantFromResult(result: ResultRecord | null): string | null {
+  const raw = result as Record<string, unknown> | null;
+  const a =
+    (raw?.lab_assistant as { username?: string; surname?: string } | null | undefined) ??
+    (raw?.labAssistant as { username?: string; surname?: string } | null | undefined) ??
+    null;
+  if (!a || typeof a !== "object") return null;
+  const initial = (a.username || "").charAt(0).toUpperCase();
+  const surname = a.surname || "";
   const name = `${initial}.${surname}`.replace(/^\./, "").replace(/\.$/, "");
   return name || null;
 }
@@ -174,6 +185,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
           patientBirthDay: order.patient?.birth_day ?? null,
           patientPhone: order.patient?.phone ?? null,
           labDoctor: labDoctorFromResult(result),
+          labAssistant: labAssistantFromResult(result),
           analysisName,
           laboratoryName,
         };
@@ -209,65 +221,11 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
         throw new Error("PDF element topilmadi");
       }
 
-      const captureScale = 2;
-      const canvas = await html2canvas(el, {
-        scale: captureScale,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        onclone: (_doc, cloned) => {
-          const border = `${1 / captureScale}px solid #000`;
-          cloned.querySelectorAll("table").forEach(t => {
-            const table = t as HTMLElement;
-            table.style.border = "none";
-            table.style.borderCollapse = "collapse";
-            table.style.borderSpacing = "0";
-          });
-          cloned.querySelectorAll("th, td").forEach(cell => {
-            const node = cell as HTMLElement;
-            node.style.border = border;
-            node.style.outline = "none";
-            node.style.boxShadow = "none";
-          });
-        },
-      });
-
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "pt",
-        format: [A4_WIDTH, A4_HEIGHT],
-      });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgData = canvas.toDataURL("image/png");
-
-      let imgW = pageW;
-      let imgH = (canvas.height * imgW) / canvas.width;
-
-      if (imgH <= pageH * 1.02) {
-        const fit = Math.min(1, pageH / imgH);
-        imgW *= fit;
-        imgH *= fit;
-        pdf.addImage(imgData, "PNG", (pageW - imgW) / 2, 0, imgW, imgH);
-      } else {
-        let heightLeft = imgH;
-        let position = 0;
-        pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
-        heightLeft -= pageH;
-        while (heightLeft > pageH * 0.02) {
-          position = heightLeft - imgH;
-          pdf.addPage();
-          pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
-          heightLeft -= pageH;
-        }
-      }
-
       const safeName = state.analysisName
         .replace(/[^\w\u0400-\u04FF\u0500-\u052F\-]+/g, "_")
         .replace(/_+/g, "_")
         .slice(0, 60);
-      pdf.save(`natija_${params.orderId}_${safeName || "analiz"}.pdf`);
+      await downloadElementAsPdf(el, `natija_${params.orderId}_${safeName || "analiz"}.pdf`);
     } catch (err) {
       setDownloadError(
         err instanceof Error ? err.message : "PDF yuklab bo'lmadi",
@@ -277,18 +235,10 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
     }
   };
 
-  const grid =
+  const previewPageHeight =
     state.status === "ready"
-      ? normalizeTableData(
-          state.template.elements.find(el => el.type === "table")?.tableData,
-        )
-      : null;
-  const previewPageHeight = grid
-    ? Math.max(
-        A4_PREVIEW_HEIGHT,
-        A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
-      )
-    : A4_PREVIEW_HEIGHT;
+      ? getPdfPreviewHeight(state.template, true)
+      : A4_PREVIEW_HEIGHT;
 
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">

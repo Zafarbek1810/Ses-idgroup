@@ -1,11 +1,19 @@
 import { apiRequest } from "./client";
 
+export type CompanyUserRole = {
+  id: number;
+  name: string;
+  description?: string;
+  createdAt?: string;
+};
+
 export type CompanyUser = {
   id: number;
   username: string;
   surname: string;
   email: string;
   createdAt?: string;
+  role?: CompanyUserRole | null;
 };
 
 export type Company = {
@@ -18,6 +26,18 @@ export type Company = {
   user?: CompanyUser[];
   createdAt: string;
 };
+
+/** Find the company employee with role name "director". */
+export function findCompanyDirector(company: Company): CompanyUser | null {
+  const users = company.user;
+  if (!Array.isArray(users)) return null;
+  return (
+    users.find(u => {
+      const name = u.role?.name?.trim().toLowerCase();
+      return name === "director";
+    }) ?? null
+  );
+}
 
 export type CompanyPayload = {
   name: string;

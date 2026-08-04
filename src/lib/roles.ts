@@ -22,7 +22,7 @@ const ROLE_NAV: Record<AppRole, readonly NavId[]> = {
   director: ["dashboard", "management", "patients", "kassa", "orders", "results"],
   kassir: ["patients", "kassa"],
   lab_director: ["dashboard", "orders", "results"],
-  lab_asistant: ["dashboard", "orders"],
+  lab_asistant: ["dashboard", "results"],
 };
 
 /** Accept common spellings / casing from the API. */

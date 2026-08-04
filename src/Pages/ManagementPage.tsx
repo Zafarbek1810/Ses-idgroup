@@ -1,14 +1,16 @@
 import * as React from "react";
 import { useState } from "react";
-import { Shield, Users, FlaskConical, TestTube2, LayoutTemplate, FileType } from "lucide-react";
+import { Shield, Users, FlaskConical, TestTube2, FileType, Globe } from "lucide-react";
 import { RolesSection } from "./management/RolesSection";
 import { UsersSection } from "./management/UsersSection";
 import { LaboratoriesSection } from "./management/LaboratoriesSection";
 import { AnalysesSection } from "./management/AnalysesSection";
 import { PatternsSection } from "./management/PatternsSection";
 import { PdfTemplateSection } from "./management/PdfTemplateSection";
+import { GlobalPdfTemplateSection } from "./management/GlobalPdfTemplateSection";
+import type { PdfTemplate } from "@/lib/pdfTemplate";
 
-type TabId = "roles" | "users" | "laboratories" | "analyses" | "patterns" | "pdf";
+type TabId = "roles" | "users" | "laboratories" | "analyses" | "patterns" | "pdf" | "globalPdf";
 
 const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "roles", label: "Rollar", icon: Shield },
@@ -17,10 +19,12 @@ const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
   { id: "analyses", label: "Analizlar", icon: TestTube2 },
   // { id: "patterns", label: "Analiz shablonlari", icon: LayoutTemplate },
   { id: "pdf", label: "PDF shablon", icon: FileType },
+  { id: "globalPdf", label: "Global PDF shablon", icon: Globe },
 ];
 
 export function ManagementPage({ primaryColor }: { primaryColor: string }) {
   const [activeTab, setActiveTab] = useState<TabId>("roles");
+  const [pdfImport, setPdfImport] = useState<PdfTemplate | null>(null);
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar">
@@ -56,7 +60,22 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
       {activeTab === "laboratories" && <LaboratoriesSection primaryColor={primaryColor} />}
       {activeTab === "analyses" && <AnalysesSection primaryColor={primaryColor} />}
       {activeTab === "patterns" && <PatternsSection primaryColor={primaryColor} />}
-      {activeTab === "pdf" && <PdfTemplateSection primaryColor={primaryColor} />}
+      {activeTab === "pdf" && (
+        <PdfTemplateSection
+          primaryColor={primaryColor}
+          importTemplate={pdfImport}
+          onImportConsumed={() => setPdfImport(null)}
+        />
+      )}
+      {activeTab === "globalPdf" && (
+        <GlobalPdfTemplateSection
+          primaryColor={primaryColor}
+          onEditTemplate={template => {
+            setPdfImport(template);
+            setActiveTab("pdf");
+          }}
+        />
+      )}
     </main>
   );
 }

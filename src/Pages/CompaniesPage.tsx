@@ -11,6 +11,7 @@ import {
   updateCompany,
   deleteCompany,
   extractCompanyId,
+  findCompanyDirector,
   type Company,
   type CompanyPayload,
 } from "@/api/company";
@@ -38,6 +39,9 @@ type AdminForm = {
 
 type CreateForm = CompanyForm & AdminForm;
 
+/** Edit: company fields + director employee (password optional). */
+type EditForm = CompanyForm & AdminForm;
+
 const PHONE_PREFIX = "+998";
 const PHONE_PATTERN = /^\+998\d{9}$/;
 
@@ -45,6 +49,12 @@ function formatPhoneNumber(raw: string): string {
   const digits = raw.replace(/\D/g, "");
   const local = digits.startsWith("998") ? digits.slice(3) : digits;
   return PHONE_PREFIX + local.slice(0, 9);
+}
+
+/** Empty / only prefix → ""; otherwise full +998XXXXXXXXX */
+function normalizeOptionalPhone(raw: string): string {
+  const phone = formatPhoneNumber(raw);
+  return phone === PHONE_PREFIX ? "" : phone;
 }
 
 const EMPTY_COMPANY: CompanyForm = {
@@ -68,34 +78,34 @@ const PER_PAGE = 10;
 
 function CompanyEditModal({
   initial,
+  hasDirector,
   primaryColor,
   saving,
   onSave,
   onClose,
 }: {
-  initial: CompanyForm;
+  initial: EditForm;
+  hasDirector: boolean;
   primaryColor: string;
   saving: boolean;
-  onSave: (data: CompanyForm) => void;
+  onSave: (data: EditForm) => void;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState<CompanyForm>({ ...initial });
-  const [errors, setErrors] = useState<Partial<Record<keyof CompanyForm, string>>>({});
+  const [form, setForm] = useState<EditForm>({ ...initial });
+  const [errors, setErrors] = useState<Partial<Record<keyof EditForm, string>>>({});
 
-  const set = <K extends keyof CompanyForm>(k: K, v: CompanyForm[K]) => {
+  const set = <K extends keyof EditForm>(k: K, v: EditForm[K]) => {
     setForm(f => ({ ...f, [k]: v }));
     setErrors(e => ({ ...e, [k]: undefined }));
   };
 
   const validate = () => {
-    const e: Partial<Record<keyof CompanyForm, string>> = {};
+    const e: Partial<Record<keyof EditForm, string>> = {};
     if (!form.name.trim() || form.name.trim().length < 2) e.name = "Kamida 2 ta belgi kiriting";
     if (!form.description.trim()) e.description = "Tavsif kiritilishi shart";
     if (!form.address.trim()) e.address = "Manzil kiritilishi shart";
     const phone = formatPhoneNumber(form.phone);
-    if (phone === PHONE_PREFIX) {
-      e.phone = "Telefon kiritilishi shart";
-    } else if (!PHONE_PATTERN.test(phone)) {
+    if (phone !== PHONE_PREFIX && !PHONE_PATTERN.test(phone)) {
       e.phone = "Format: +998 dan keyin 9 ta raqam";
     }
     setErrors(e);
@@ -107,10 +117,13 @@ function CompanyEditModal({
       err ? "border-red-400" : "border-border focus:border-[var(--primary)]"
     }`;
 
+  const disabledInputCls =
+    "w-full bg-secondary/60 border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-muted-foreground cursor-not-allowed opacity-80";
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
+      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-xl overflow-hidden flex flex-col max-h-[92vh]">
         <div className="flex items-center justify-between px-6 py-5 border-b border-border shrink-0">
           <div>
             <h2 className="font-semibold text-foreground text-[15px]">Tashkilotni tahrirlash</h2>
@@ -121,96 +134,148 @@ function CompanyEditModal({
           </button>
         </div>
 
-        <div className="overflow-y-auto ses-scrollbar p-6 space-y-4">
+        <div className="overflow-y-auto ses-scrollbar p-6 space-y-5">
           <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Nomi *</label>
-            <input
-              type="text"
-              value={form.name}
-              placeholder="Masalan: Urganch SES"
-              onChange={e => set("name", e.target.value)}
-              className={inputCls(errors.name)}
-            />
-            {errors.name && <p className="text-[11px] text-red-500 mt-1">{errors.name}</p>}
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Tavsif *</label>
-            <textarea
-              value={form.description}
-              placeholder="Tashkilot haqida qisqacha"
-              rows={3}
-              onChange={e => set("description", e.target.value)}
-              className={`${inputCls(errors.description)} resize-none`}
-            />
-            {errors.description && <p className="text-[11px] text-red-500 mt-1">{errors.description}</p>}
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Manzil *</label>
-            <input
-              type="text"
-              value={form.address}
-              placeholder="Shahar, ko'cha…"
-              onChange={e => set("address", e.target.value)}
-              className={inputCls(errors.address)}
-            />
-            {errors.address && <p className="text-[11px] text-red-500 mt-1">{errors.address}</p>}
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">Telefon *</label>
-            <input
-              type="tel"
-              value={form.phone || PHONE_PREFIX}
-              placeholder="+998901234567"
-              onChange={e => set("phone", formatPhoneNumber(e.target.value))}
-              onFocus={e => {
-                if (!form.phone || form.phone === PHONE_PREFIX) {
-                  set("phone", PHONE_PREFIX);
-                }
-                const el = e.currentTarget;
-                requestAnimationFrame(() => {
-                  if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
-                    el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
-                  }
-                });
-              }}
-              onKeyDown={e => {
-                const input = e.currentTarget;
-                const start = input.selectionStart ?? 0;
-                const end = input.selectionEnd ?? 0;
-                const touchingPrefix =
-                  start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
-                if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
-                  e.preventDefault();
-                  input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
-                }
-              }}
-              className={inputCls(errors.phone)}
-            />
-            {errors.phone && <p className="text-[11px] text-red-500 mt-1">{errors.phone}</p>}
-          </div>
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/50 px-3.5 py-3">
-            <div>
-              <p className="text-xs font-semibold text-foreground">Holat</p>
-              <p className="text-[11px] text-muted-foreground mt-0.5">
-                {form.active ? "Tashkilot faol" : "Tashkilot faol emas"}
-              </p>
+            <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">
+              Tashkilot ma'lumotlari
+            </p>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Nomi *</label>
+                <input
+                  type="text"
+                  value={form.name}
+                  placeholder="Masalan: Urganch SES"
+                  onChange={e => set("name", e.target.value)}
+                  className={inputCls(errors.name)}
+                />
+                {errors.name && <p className="text-[11px] text-red-500 mt-1">{errors.name}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Tavsif *</label>
+                <textarea
+                  value={form.description}
+                  placeholder="Tashkilot haqida qisqacha"
+                  rows={2}
+                  onChange={e => set("description", e.target.value)}
+                  className={`${inputCls(errors.description)} resize-none`}
+                />
+                {errors.description && <p className="text-[11px] text-red-500 mt-1">{errors.description}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">Manzil *</label>
+                <input
+                  type="text"
+                  value={form.address}
+                  placeholder="Shahar, ko'cha…"
+                  onChange={e => set("address", e.target.value)}
+                  className={inputCls(errors.address)}
+                />
+                {errors.address && <p className="text-[11px] text-red-500 mt-1">{errors.address}</p>}
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Telefon <span className="font-normal text-muted-foreground">(ixtiyoriy)</span>
+                </label>
+                <input
+                  type="tel"
+                  value={form.phone || PHONE_PREFIX}
+                  placeholder="+998901234567"
+                  onChange={e => set("phone", formatPhoneNumber(e.target.value))}
+                  onFocus={e => {
+                    if (!form.phone || form.phone === PHONE_PREFIX) {
+                      set("phone", PHONE_PREFIX);
+                    }
+                    const el = e.currentTarget;
+                    requestAnimationFrame(() => {
+                      if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                        el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                      }
+                    });
+                  }}
+                  onKeyDown={e => {
+                    const input = e.currentTarget;
+                    const start = input.selectionStart ?? 0;
+                    const end = input.selectionEnd ?? 0;
+                    const touchingPrefix =
+                      start < PHONE_PREFIX.length || (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                    if ((e.key === "Backspace" || e.key === "Delete") && touchingPrefix && end <= PHONE_PREFIX.length) {
+                      e.preventDefault();
+                      input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                    }
+                  }}
+                  className={inputCls(errors.phone)}
+                />
+                {errors.phone && <p className="text-[11px] text-red-500 mt-1">{errors.phone}</p>}
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/50 px-3.5 py-3">
+                <div>
+                  <p className="text-xs font-semibold text-foreground">Holat</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5">
+                    {form.active ? "Tashkilot faol" : "Tashkilot faol emas"}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={form.active}
+                  onClick={() => set("active", !form.active)}
+                  className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
+                    form.active ? "bg-emerald-500" : "bg-muted-foreground/30"
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      form.active ? "translate-x-5" : "translate-x-0"
+                    }`}
+                  />
+                </button>
+              </div>
             </div>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={form.active}
-              onClick={() => set("active", !form.active)}
-              className={`relative h-6 w-11 shrink-0 rounded-full transition-colors ${
-                form.active ? "bg-emerald-500" : "bg-muted-foreground/30"
-              }`}
-            >
-              <span
-                className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                  form.active ? "translate-x-5" : "translate-x-0"
-                }`}
-              />
-            </button>
           </div>
+
+          {hasDirector && (
+            <div className="border-t border-border pt-5">
+              <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground mb-3">
+                Biriktirilgan xodim (director)
+              </p>
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">Ism</label>
+                    <input
+                      type="text"
+                      value={form.username}
+                      disabled
+                      readOnly
+                      className={disabledInputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">Familiya</label>
+                    <input
+                      type="text"
+                      value={form.surname}
+                      disabled
+                      readOnly
+                      className={disabledInputCls}
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Email</label>
+                  <input
+                    type="email"
+                    value={form.email}
+                    disabled
+                    readOnly
+                    className={disabledInputCls}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex gap-3 px-6 pb-6 pt-2 shrink-0 border-t border-border">
@@ -224,7 +289,7 @@ function CompanyEditModal({
           <button
             onClick={() => {
               if (!validate()) return;
-              onSave({ ...form, phone: formatPhoneNumber(form.phone) });
+              onSave({ ...form, phone: normalizeOptionalPhone(form.phone) });
             }}
             disabled={saving}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
@@ -268,9 +333,7 @@ function CompanyCreateModal({
     if (!form.description.trim()) e.description = "Tavsif kiritilishi shart";
     if (!form.address.trim()) e.address = "Manzil kiritilishi shart";
     const phone = formatPhoneNumber(form.phone);
-    if (phone === PHONE_PREFIX) {
-      e.phone = "Telefon kiritilishi shart";
-    } else if (!PHONE_PATTERN.test(phone)) {
+    if (phone !== PHONE_PREFIX && !PHONE_PATTERN.test(phone)) {
       e.phone = "Format: +998 dan keyin 9 ta raqam";
     }
     if (!form.username.trim() || form.username.trim().length < 2) e.username = "Kamida 2 ta belgi kiriting";
@@ -342,7 +405,9 @@ function CompanyCreateModal({
                 {errors.address && <p className="text-[11px] text-red-500 mt-1">{errors.address}</p>}
               </div>
               <div>
-                <label className="block text-xs font-semibold text-foreground mb-1.5">Telefon *</label>
+                <label className="block text-xs font-semibold text-foreground mb-1.5">
+                  Telefon <span className="font-normal text-muted-foreground">(ixtiyoriy)</span>
+                </label>
                 <input
                   type="tel"
                   value={form.phone || PHONE_PREFIX}
@@ -477,7 +542,7 @@ function CompanyCreateModal({
           <button
             onClick={() => {
               if (!validate()) return;
-              onSave({ ...form, phone: formatPhoneNumber(form.phone) });
+              onSave({ ...form, phone: normalizeOptionalPhone(form.phone) });
             }}
             disabled={saving}
             className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70 flex items-center justify-center gap-2"
@@ -553,7 +618,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
         name: form.name.trim(),
         description: form.description.trim(),
         address: form.address.trim(),
-        phone: formatPhoneNumber(form.phone),
+        phone: normalizeOptionalPhone(form.phone),
         active: form.active,
       };
       const created = await addCompany(companyPayload);
@@ -602,7 +667,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
     }
   };
 
-  const handleUpdate = async (form: CompanyForm) => {
+  const handleUpdate = async (form: EditForm) => {
     if (modal?.type !== "edit") return;
     setSaving(true);
     try {
@@ -610,10 +675,11 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
         name: form.name.trim(),
         description: form.description.trim(),
         address: form.address.trim(),
-        phone: formatPhoneNumber(form.phone),
+        phone: normalizeOptionalPhone(form.phone),
         active: form.active,
       };
       await updateCompany(modal.company.id, payload);
+
       pushToast(`"${payload.name}" yangilandi`);
       setModal(null);
       await loadCompanies();
@@ -880,21 +946,29 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
           onClose={() => setModal(null)}
         />
       )}
-      {modal?.type === "edit" && (
-        <CompanyEditModal
-          initial={{
-            name: modal.company.name,
-            description: modal.company.description,
-            address: modal.company.address,
-            phone: formatPhoneNumber(modal.company.phone || PHONE_PREFIX),
-            active: modal.company.active ?? true,
-          }}
-          primaryColor={primaryColor}
-          saving={saving}
-          onSave={handleUpdate}
-          onClose={() => setModal(null)}
-        />
-      )}
+      {modal?.type === "edit" && (() => {
+        const director = findCompanyDirector(modal.company);
+        return (
+          <CompanyEditModal
+            initial={{
+              name: modal.company.name,
+              description: modal.company.description,
+              address: modal.company.address,
+              phone: formatPhoneNumber(modal.company.phone || PHONE_PREFIX),
+              active: modal.company.active ?? true,
+              username: director?.username ?? "",
+              surname: director?.surname ?? "",
+              email: director?.email ?? "",
+              password: "",
+            }}
+            hasDirector={director != null}
+            primaryColor={primaryColor}
+            saving={saving}
+            onSave={handleUpdate}
+            onClose={() => setModal(null)}
+          />
+        );
+      })()}
       {modal?.type === "delete" && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={() => setModal(null)} />

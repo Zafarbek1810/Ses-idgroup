@@ -1,12 +1,14 @@
 import * as React from "react";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
-  A4_HEIGHT,
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_SCALE,
   A4_PREVIEW_WIDTH,
-  A4_WIDTH,
   formatDynamicDisplay,
+  getPdfPageCount,
+  getPdfPageMarginPreview,
+  getPdfPreviewHeight,
+  getPdfUsablePreviewHeight,
   normalizeTableData,
   type PdfDynamicContext,
   type PdfElement,
@@ -26,32 +28,89 @@ export const ResultPdfCanvas = React.forwardRef<
   { template, fillValues, dynamicCtx, onFillChange, readOnly = false },
   ref,
 ) {
-  const tableEl = template.elements.find(el => el.type === "table");
-  const grid = normalizeTableData(tableEl?.tableData);
-  const pageHeight = Math.max(
-    A4_PREVIEW_HEIGHT,
-    A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
-  );
-  const a4PreviewHeight = Math.round((A4_PREVIEW_WIDTH * A4_HEIGHT) / A4_WIDTH);
-  const height =
-    readOnly && pageHeight <= a4PreviewHeight * 1.05 ? a4PreviewHeight : pageHeight;
+  // Export / public view: each page has top+bottom margin so splits aren't flush to edges.
+  // Edit mode: continuous canvas so inputs stay a single DOM tree.
+  const withMargins = readOnly;
+  const pageCount = getPdfPageCount(template, withMargins);
+  const height = getPdfPreviewHeight(template, withMargins);
+  const marginPx = withMargins ? getPdfPageMarginPreview() : 0;
+  const usablePx = getPdfUsablePreviewHeight(withMargins);
+
+  const renderElements = (keyPrefix: string) =>
+    template.elements.map(el => (
+      <FillableElement
+        key={`${keyPrefix}-${el.id}`}
+        element={el}
+        fillValues={fillValues}
+        dynamicCtx={dynamicCtx}
+        onFillChange={onFillChange}
+        readOnly={readOnly}
+      />
+    ));
+
+  if (withMargins) {
+    return (
+      <div
+        ref={ref}
+        className="relative bg-white shrink-0"
+        style={{ width: A4_PREVIEW_WIDTH, height }}
+      >
+        {Array.from({ length: pageCount }, (_, page) => (
+          <div
+            key={page}
+            className="absolute left-0 bg-white"
+            style={{
+              top: page * A4_PREVIEW_HEIGHT,
+              width: A4_PREVIEW_WIDTH,
+              height: A4_PREVIEW_HEIGHT,
+            }}
+          >
+            {/* Content window inset by top/bottom margins — edges stay blank */}
+            <div
+              className="absolute left-0 overflow-hidden"
+              style={{
+                top: marginPx,
+                width: A4_PREVIEW_WIDTH,
+                height: usablePx,
+              }}
+            >
+              <div
+                className="absolute left-0"
+                style={{
+                  top: -page * usablePx,
+                  width: A4_PREVIEW_WIDTH,
+                }}
+              >
+                {renderElements(`p${page}`)}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div
       ref={ref}
-      className={`relative bg-white shrink-0 ${readOnly ? "" : "shadow-xl border border-slate-200"}`}
+      className="relative bg-white shrink-0 shadow-xl border border-slate-200"
       style={{ width: A4_PREVIEW_WIDTH, height }}
     >
-      {template.elements.map(el => (
-        <FillableElement
-          key={el.id}
-          element={el}
-          fillValues={fillValues}
-          dynamicCtx={dynamicCtx}
-          onFillChange={onFillChange}
-          readOnly={readOnly}
-        />
-      ))}
+      {pageCount > 1 &&
+        Array.from({ length: pageCount - 1 }, (_, i) => (
+          <div
+            key={`break-${i}`}
+            data-pdf-page-break=""
+            className="absolute left-0 right-0 z-30 pointer-events-none border-t border-dashed border-sky-400/80"
+            style={{ top: (i + 1) * A4_PREVIEW_HEIGHT }}
+            aria-hidden
+          >
+            <span className="absolute right-1 -top-2.5 rounded bg-sky-100 px-1.5 py-0.5 text-[8px] font-semibold text-sky-700">
+              {i + 2}-sahifa
+            </span>
+          </div>
+        ))}
+      {renderElements("edit")}
     </div>
   );
 });

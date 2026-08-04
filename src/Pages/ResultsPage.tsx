@@ -5,8 +5,6 @@ import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
   ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut,
 } from "lucide-react";
-import html2canvas from "html2canvas-pro";
-import { jsPDF } from "jspdf";
 import {
   getAllOrders,
   getOrderById,
@@ -31,15 +29,16 @@ import { getStoredUser } from "@/api/auth";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
+import { normalizeRoleName } from "@/lib/roles";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
+import { downloadElementAsPdf } from "@/lib/pdfExport";
 import {
-  A4_HEIGHT,
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
-  A4_WIDTH,
   bodyCellKey,
   fetchPdfTemplatesFromApi,
   getActivePdfTemplate,
+  getPdfPreviewHeight,
   headerCellKey,
   isDynamicCell,
   loadPdfTemplates,
@@ -145,10 +144,12 @@ function buildDynamicContext(
 ): PdfDynamicContext {
   const patient = order?.patient;
   const user = getStoredUser();
-  const doctorName = user
+  const shortName = user
     ? `${(user.username || "").charAt(0).toUpperCase()}.${user.surname || ""}`.replace(/^\./, "").replace(/\.$/, "") ||
       null
     : null;
+  const role = normalizeRoleName(user?.role?.name);
+  const isAssistant = role === "lab_asistant";
 
   return {
     orderId: row.orderId,
@@ -158,7 +159,8 @@ function buildDynamicContext(
     patientAddress: order ? buildAddress(order, patient) : null,
     patientBirthDay: patient?.birth_day ?? null,
     patientPhone: patient?.phone ?? null,
-    labDoctor: doctorName,
+    labDoctor: isAssistant ? null : shortName,
+    labAssistant: isAssistant ? shortName : null,
     analysisName: row.analysisName,
     laboratoryName: row.laboratoryName !== "—" ? row.laboratoryName : null,
   };
@@ -486,68 +488,11 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         return;
       }
 
-      const captureScale = 2;
-      const canvas = await html2canvas(el, {
-        scale: captureScale,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: "#ffffff",
-        logging: false,
-        onclone: (_doc, cloned) => {
-          // scale:2 → 0.5px CSS = 1px in the final bitmap/PDF
-          const border = `${1 / captureScale}px solid #000`;
-          cloned.querySelectorAll("table").forEach(t => {
-            const table = t as HTMLElement;
-            table.style.border = "none";
-            table.style.borderCollapse = "collapse";
-            table.style.borderSpacing = "0";
-          });
-          cloned.querySelectorAll("th, td").forEach(cell => {
-            const node = cell as HTMLElement;
-            node.style.border = border;
-            node.style.outline = "none";
-            node.style.boxShadow = "none";
-          });
-        },
-      });
-
-      const pdf = new jsPDF({
-        orientation: "portrait",
-        unit: "pt",
-        format: [A4_WIDTH, A4_HEIGHT],
-      });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgData = canvas.toDataURL("image/png");
-
-      // Preview px → A4 pt; float rounding often makes imgH ≈ pageH + 0.5pt
-      let imgW = pageW;
-      let imgH = (canvas.height * imgW) / canvas.width;
-
-      if (imgH <= pageH * 1.02) {
-        // One A4 page — fit exactly, no blank 2nd page
-        const fit = Math.min(1, pageH / imgH);
-        imgW *= fit;
-        imgH *= fit;
-        pdf.addImage(imgData, "PNG", (pageW - imgW) / 2, 0, imgW, imgH);
-      } else {
-        let heightLeft = imgH;
-        let position = 0;
-        pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
-        heightLeft -= pageH;
-        while (heightLeft > pageH * 0.02) {
-          position = heightLeft - imgH;
-          pdf.addPage();
-          pdf.addImage(imgData, "PNG", 0, position, imgW, imgH);
-          heightLeft -= pageH;
-        }
-      }
-
       const safeName = selected.analysisName
         .replace(/[^\w\u0400-\u04FF\u0500-\u052F\-]+/g, "_")
         .replace(/_+/g, "_")
         .slice(0, 60);
-      pdf.save(`natija_${selected.orderId}_${safeName || "analiz"}.pdf`);
+      await downloadElementAsPdf(el, `natija_${selected.orderId}_${safeName || "analiz"}.pdf`);
       pushToast("PDF yuklab olindi");
     } catch (err) {
       pushToast(err instanceof Error ? err.message : "PDF yuklab bo'lmadi", "error");
@@ -563,10 +508,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     const hasTable = Boolean(template?.elements.some(el => el.type === "table"));
     const tableEl = template?.elements.find(el => el.type === "table");
     const grid = normalizeTableData(tableEl?.tableData);
-    const previewPageHeight = Math.max(
-      A4_PREVIEW_HEIGHT,
-      A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
-    );
+    const previewPageHeight = template
+      ? getPdfPreviewHeight(template, exporting)
+      : A4_PREVIEW_HEIGHT;
 
     return (
       <main className="flex-1 overflow-y-auto p-6 space-y-4 ses-scrollbar">

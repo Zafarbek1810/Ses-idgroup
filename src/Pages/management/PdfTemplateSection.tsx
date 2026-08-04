@@ -4,7 +4,7 @@ import {
   Type, Heading1, Heading2, Heading3, Image as ImageIcon, Table2,
   Bold, Italic, Underline, Trash2, Save, Plus, RefreshCw, CheckCircle,
   AlertCircle, Loader2, FileText, MousePointer2, AlignLeft, AlignCenter,
-  AlignRight, GripVertical, X, Upload, Database, Minus, Combine,
+  AlignRight, GripVertical, X, Upload, Database, Minus, Combine, Globe,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
 import { ApiError } from "@/api/client";
@@ -16,6 +16,7 @@ import {
   A4_PREVIEW_WIDTH,
   A4_WIDTH,
   DYNAMIC_FIELDS,
+  PDF_MAX_PAGES,
   createDynamicElement,
   createEmptyTableData,
   createPdfElement,
@@ -24,6 +25,8 @@ import {
   fetchPdfTemplatesFromApi,
   formatDynamicDisplay,
   getDynamicFieldDef,
+  getPdfPageCount,
+  getPdfPreviewHeight,
   loadPdfTemplates,
   mergeBodySelection,
   mergeHeaderSelection,
@@ -40,6 +43,7 @@ import {
   updateBodyCell,
   updateColWidths,
   updateHeaderCell,
+  upsertPdfTemplateGlobal,
   upsertPdfTemplateRemote,
   type PdfDynamicFieldKey,
   type PdfElement,
@@ -177,7 +181,15 @@ function NewTemplateModal({
   );
 }
 
-export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
+export function PdfTemplateSection({
+  primaryColor,
+  importTemplate = null,
+  onImportConsumed,
+}: {
+  primaryColor: string;
+  importTemplate?: PdfTemplate | null;
+  onImportConsumed?: () => void;
+}) {
   const [templates, setTemplates] = useState<PdfTemplate[]>([]);
   const [template, setTemplate] = useState<PdfTemplate>(() => emptyTemplate());
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -185,6 +197,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingGlobal, setSavingGlobal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -229,6 +242,20 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   useEffect(() => {
     void loadMeta();
   }, []);
+
+  // Global PDF tab → "Tahrirlash": open editor with imported clone
+  useEffect(() => {
+    if (!importTemplate) return;
+    setTemplate(structuredClone(importTemplate));
+    setSelectedId(null);
+    setEditingId(null);
+    setTableSel(null);
+    setActiveTemplateId(null);
+    setEditorOpen(true);
+    onImportConsumed?.();
+    pushToast("Global shablon tahrirlash uchun ochildi — o'z storage'ga saqlang");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once per import
+  }, [importTemplate]);
 
   // Scroll props into view when selection changes
   useEffect(() => {
@@ -306,6 +333,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   };
 
   const handleElementDrag = (id: string, dx: number, dy: number) => {
+    const maxY = A4_HEIGHT * PDF_MAX_PAGES - 20;
     setTemplate(t => ({
       ...t,
       elements: t.elements.map(el => {
@@ -313,7 +341,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
         return {
           ...el,
           x: Math.max(0, Math.min(el.x + dx / A4_PREVIEW_SCALE, A4_WIDTH - el.width)),
-          y: Math.max(0, Math.min(el.y + dy / A4_PREVIEW_SCALE, A4_HEIGHT - 20)),
+          y: Math.max(0, Math.min(el.y + dy / A4_PREVIEW_SCALE, maxY)),
         };
       }),
     }));
@@ -347,6 +375,30 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
       );
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveGlobal = async () => {
+    setSavingGlobal(true);
+    try {
+      const saved = await upsertPdfTemplateGlobal(template);
+      setTemplate(t => ({
+        ...t,
+        globalStorageId: saved.globalStorageId,
+        companyId: saved.companyId,
+      }));
+      pushToast("Global PDF shablonga saqlandi");
+    } catch (err) {
+      pushToast(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : "Globalga saqlab bo'lmadi",
+        "error",
+      );
+    } finally {
+      setSavingGlobal(false);
     }
   };
 
@@ -439,6 +491,8 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
   };
 
   const isTextual = selected && ["heading1", "heading2", "heading3", "text"].includes(selected.type);
+  const pageCount = getPdfPageCount(template);
+  const previewHeight = getPdfPreviewHeight(template);
 
   return (
     <div className="space-y-4">
@@ -494,7 +548,7 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
             <button
               type="button"
               onClick={() => void handleSave()}
-              disabled={saving || deleting}
+              disabled={saving || savingGlobal || deleting}
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
               style={{ background: primaryColor }}
             >
@@ -505,11 +559,25 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
               )}
               Saqlash
             </button>
+            <button
+              type="button"
+              onClick={() => void handleSaveGlobal()}
+              disabled={saving || savingGlobal || deleting}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold border border-border bg-secondary text-foreground hover:opacity-90 disabled:opacity-50"
+              title="Barcha tumanlar ko'ra oladigan global omborga saqlash"
+            >
+              {savingGlobal ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Globe className="w-3.5 h-3.5" />
+              )}
+              Globalga saqlash
+            </button>
             {templates.some(t => t.id === template.id) && (
               <button
                 type="button"
                 onClick={() => void handleDeleteTemplate(template.id)}
-                disabled={saving || deleting}
+                disabled={saving || savingGlobal || deleting}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold text-red-600 bg-red-500/10 hover:bg-red-500/15 disabled:opacity-50"
               >
                 {deleting ? (
@@ -706,10 +774,11 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
                     <input
                       type="number"
                       min={20}
-                      max={A4_HEIGHT}
+                      max={A4_HEIGHT * PDF_MAX_PAGES}
                       value={Math.round(selected.height)}
                       onChange={e => {
-                        const height = Math.max(20, Math.min(A4_HEIGHT - selected.y, Number(e.target.value) || 20));
+                        const maxH = A4_HEIGHT * PDF_MAX_PAGES - selected.y;
+                        const height = Math.max(20, Math.min(maxH, Number(e.target.value) || 20));
                         updateElement(selected.id, { height });
                       }}
                       className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
@@ -871,13 +940,14 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
           </div>
         </div>
 
-        {/* A4 canvas */}
+        {/* A4 canvas (grows to 2–N pages when content overflows) */}
         <div className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-border flex items-center justify-between gap-3">
             <div>
               <h3 className="text-[13px] font-semibold text-foreground">A4 ko&apos;rinishi</h3>
               <p className="text-[11px] text-muted-foreground mt-0.5">
                 Bosish — tahrirlash · burchak/tomon — o&apos;lcham · tortib ko&apos;chirish
+                {pageCount > 1 ? ` · ${pageCount} sahifa` : ""}
               </p>
             </div>
             <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -903,9 +973,24 @@ export function PdfTemplateSection({ primaryColor }: { primaryColor: string }) {
               className="relative bg-white shadow-xl border border-slate-200 shrink-0"
               style={{
                 width: A4_PREVIEW_WIDTH,
-                height: A4_PREVIEW_HEIGHT,
+                height: previewHeight,
               }}
             >
+              {pageCount > 1 &&
+                Array.from({ length: pageCount - 1 }, (_, i) => (
+                  <div
+                    key={`page-break-${i}`}
+                    data-pdf-page-break=""
+                    className="absolute left-0 right-0 z-40 pointer-events-none border-t-2 border-dashed border-sky-400/80"
+                    style={{ top: (i + 1) * A4_PREVIEW_HEIGHT }}
+                    aria-hidden
+                  >
+                    <span className="absolute right-2 -top-2.5 rounded bg-sky-100 px-1.5 py-0.5 text-[9px] font-semibold text-sky-700">
+                      {i + 2}-sahifa
+                    </span>
+                  </div>
+                ))}
+
               {template.elements.length === 0 && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="text-center px-6">
@@ -1687,7 +1772,8 @@ function applyResize(
     height = nextH;
   }
 
-  // Keep inside A4 bounds
+  // Keep width inside A4; height may span multiple pages
+  const maxDocH = A4_HEIGHT * PDF_MAX_PAGES;
   if (x < 0) {
     width += x;
     x = 0;
@@ -1697,7 +1783,7 @@ function applyResize(
     y = 0;
   }
   if (x + width > A4_WIDTH) width = A4_WIDTH - x;
-  if (y + height > A4_HEIGHT) height = A4_HEIGHT - y;
+  if (y + height > maxDocH) height = maxDocH - y;
 
   width = Math.max(MIN_W, width);
   height = Math.max(MIN_H, height);

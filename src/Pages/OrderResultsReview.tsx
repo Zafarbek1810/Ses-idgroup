@@ -1,7 +1,7 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
-  ArrowLeft, CheckCircle, AlertCircle, FileText, Loader2, ShieldCheck, Link2,
+  ArrowLeft, CheckCircle, AlertCircle, FileText, Loader2, ShieldCheck, Link2, Printer,
 } from "lucide-react";
 import { buildShowResultUrl } from "@/lib/showResultLink";
 import { copyTextToClipboard } from "@/lib/copyText";
@@ -26,14 +26,17 @@ import {
 import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
+import { printElementAsPdf } from "@/lib/pdfExport";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
+import { normalizeRoleName } from "@/lib/roles";
 import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
   bodyCellKey,
   fetchPdfTemplatesFromApi,
   getActivePdfTemplate,
+  getPdfPreviewHeight,
   headerCellKey,
   isDynamicCell,
   loadPdfTemplates,
@@ -169,7 +172,9 @@ export function OrderResultsReview({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
+  const pdfRef = useRef<HTMLDivElement>(null);
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
     const id = Date.now() + Math.random();
@@ -201,11 +206,13 @@ export function OrderResultsReview({
 
       const savedItems = getResultItems(resultRec);
       const userDoc = getStoredUser();
-      const doctorName = userDoc
+      const shortName = userDoc
         ? `${(userDoc.username || "").charAt(0).toUpperCase()}.${userDoc.surname || ""}`
             .replace(/^\./, "")
             .replace(/\.$/, "") || null
         : null;
+      const role = normalizeRoleName(userDoc?.role?.name);
+      const isAssistant = role === "lab_asistant";
 
       const nextViews: AnalysisPdfView[] = [];
       for (const item of (orderData.items ?? []) as OrderItem[]) {
@@ -234,7 +241,8 @@ export function OrderResultsReview({
             patientAddress: buildAddress(orderData, orderData.patient),
             patientBirthDay: orderData.patient?.birth_day ?? null,
             patientPhone: orderData.patient?.phone ?? null,
-            labDoctor: doctorName,
+            labDoctor: isAssistant ? null : shortName,
+            labAssistant: isAssistant ? shortName : null,
             analysisName,
             laboratoryName: laboratoryName !== "—" ? laboratoryName : null,
           },
@@ -306,16 +314,31 @@ export function OrderResultsReview({
     }
   };
 
+  const handlePrint = async () => {
+    if (printing) return;
+    const el = pdfRef.current;
+    if (!el) {
+      pushToast("Chop etish uchun PDF tayyor emas", "error");
+      return;
+    }
+    setPrinting(true);
+    try {
+      await printElementAsPdf(el);
+      pushToast("Chop etish oynasi ochildi", "info");
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Chop etib bo'lmadi", "error");
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   const active = views.find(v => v.key === activeKey) ?? views[0] ?? null;
   const isCompleted = String(order?.status ?? "") === "completed";
   const hasTable = Boolean(active?.template?.elements.some(el => el.type === "table"));
-  const grid = normalizeTableData(
-    active?.template?.elements.find(el => el.type === "table")?.tableData,
-  );
-  const previewPageHeight = Math.max(
-    A4_PREVIEW_HEIGHT,
-    A4_PREVIEW_HEIGHT + Math.max(0, grid.bodyRows - 8) * 18 + grid.headerRows * 8,
-  );
+  const canPrint = Boolean(active?.template && hasTable && !loading && !error);
+  const previewPageHeight = active?.template
+    ? getPdfPreviewHeight(active.template, true)
+    : A4_PREVIEW_HEIGHT;
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar">
@@ -394,22 +417,37 @@ export function OrderResultsReview({
                 : "Natijalarni ko‘rib chiqing va buyurtmani yakunlang — bemorga SMS yuboriladi."}
             </p>
           </div>
-          {!isCompleted && (
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              disabled={confirming || loading}
-              onClick={() => void handleConfirm()}
-              className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-[14px] font-bold text-white shadow-md hover:opacity-95 disabled:opacity-50 min-w-[220px]"
-              style={{ background: primaryColor }}
+              disabled={!canPrint || printing}
+              onClick={() => void handlePrint()}
+              className="inline-flex items-center justify-center gap-2 px-5 py-3.5 rounded-xl text-[14px] font-bold border border-border bg-card text-foreground shadow-sm hover:opacity-95 disabled:opacity-50 min-w-[160px]"
             >
-              {confirming ? (
+              {printing ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
               ) : (
-                <ShieldCheck className="w-5 h-5" />
+                <Printer className="w-5 h-5" />
               )}
-              Buyurtmani tasdiqlash
+              Chop etish
             </button>
-          )}
+            {!isCompleted && (
+              <button
+                type="button"
+                disabled={confirming || loading}
+                onClick={() => void handleConfirm()}
+                className="inline-flex items-center justify-center gap-2 px-6 py-3.5 rounded-xl text-[14px] font-bold text-white shadow-md hover:opacity-95 disabled:opacity-50 min-w-[220px]"
+                style={{ background: primaryColor }}
+              >
+                {confirming ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <ShieldCheck className="w-5 h-5" />
+                )}
+                Buyurtmani tasdiqlash
+              </button>
+            )}
+          </div>
         </section>
       )}
 
@@ -516,6 +554,7 @@ export function OrderResultsReview({
                     style={{ width: A4_PREVIEW_WIDTH, minHeight: previewPageHeight }}
                   >
                     <ResultPdfCanvas
+                      ref={pdfRef}
                       template={active.template}
                       fillValues={active.fillValues}
                       dynamicCtx={active.dynamicCtx}

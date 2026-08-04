@@ -8,3 +8,6 @@ export { OrderPage } from "./OrderPage";
 export { OrdersPage } from "./OrdersPage";
 export { ResultsPage } from "./ResultsPage";
 export { ShowResultPage } from "./ShowResultPage";
+export { ProfilePage } from "./ProfilePage";
+export { EditProfilePage } from "./EditProfilePage";
+export { SettingsPage } from "./SettingsPage";

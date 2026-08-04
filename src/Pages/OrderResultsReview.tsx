@@ -243,6 +243,7 @@ export function OrderResultsReview({
             patientFullName: patientName(orderData.patient, orderData.name),
             patientAddress: buildAddress(orderData, orderData.patient),
             patientBirthDay: orderData.patient?.birth_day ?? null,
+            patientRegisteredAt: orderData.patient?.createdAt ?? null,
             patientPhone: orderData.patient?.phone ?? null,
             labDoctor: isAssistant ? null : shortName,
             labAssistant: isAssistant ? shortName : null,

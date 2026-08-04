@@ -14,6 +14,7 @@ import {
   updateGlobalStorage,
   type GlobalStorage,
 } from "@/api/globalStorage";
+import { updateAnalysis } from "@/api/analysis";
 import { getStoredCompanyId, getStoredUser } from "@/api/session";
 import { getCompanyById } from "@/api/company";
 
@@ -43,6 +44,7 @@ export type PdfDynamicFieldKey =
   | "patient_full_name"
   | "patient_address"
   | "patient_birth_day"
+  | "patient_registered_at"
   | "patient_phone"
   | "lab_doctor"
   | "lab_assistant"
@@ -103,6 +105,12 @@ export const DYNAMIC_FIELDS: PdfDynamicFieldDef[] = [
     hint: "Tug'ilgan sana",
   },
   {
+    key: "patient_registered_at",
+    label: "Ro'yxatdan o'tgan sana",
+    sample: "Sanasi/vaqti",
+    hint: "Mijoz ro'yxatga olingan sana",
+  },
+  {
     key: "patient_phone",
     label: "Telefon raqami",
     sample: "Raqam #",
@@ -153,6 +161,7 @@ export type PdfDynamicContext = {
   patientFullName?: string | null;
   patientAddress?: string | null;
   patientBirthDay?: string | null;
+  patientRegisteredAt?: string | null;
   patientPhone?: string | null;
   labDoctor?: string | null;
   labAssistant?: string | null;
@@ -222,6 +231,8 @@ export function resolveDynamicValue(
       return pick(ctx.patientAddress);
     case "patient_birth_day":
       return pick(formatPdfDate(ctx.patientBirthDay) || null);
+    case "patient_registered_at":
+      return pick(formatPdfDate(ctx.patientRegisteredAt) || null);
     case "patient_phone":
       return pick(ctx.patientPhone);
     case "lab_doctor":
@@ -1338,16 +1349,22 @@ export async function upsertPdfTemplateRemote(template: PdfTemplate): Promise<Pd
     }
   }
 
+  await updateAnalysis(analysisId, { onlinestorage: true });
+
   const saved: PdfTemplate = { ...next, storageId };
   upsertPdfTemplate(saved);
   return saved;
 }
 
 export async function deletePdfTemplateRemote(template: PdfTemplate): Promise<void> {
+  const analysisId = resolvePdfTemplateAnalysisId(template);
   if (template.storageId != null && template.storageId > 0) {
     await deleteOnlineStorage(template.storageId);
   }
   deletePdfTemplate(template.id);
+  if (analysisId != null) {
+    await updateAnalysis(analysisId, { onlinestorage: false });
+  }
 }
 
 export function globalStorageRecordToPdfTemplate(

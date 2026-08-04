@@ -14,6 +14,9 @@ export type Analysis = {
   price: string;
   createdAt: string;
   laboratory: AnalysisLaboratory;
+  /** PDF shablon mavjudligi (`/onlinestorage`) */
+  onlinestorage?: boolean;
+  onlineStorage?: boolean;
 };
 
 export type AnalysisPayload = {
@@ -22,6 +25,20 @@ export type AnalysisPayload = {
   price: string;
   laboratory_id: number;
 };
+
+/** Partial PATCH body — e.g. only `{ onlinestorage: true }` after template save */
+export type AnalysisUpdatePayload = Partial<AnalysisPayload> & {
+  onlinestorage?: boolean;
+};
+
+export function analysisHasOnlineStorage(a: Analysis): boolean {
+  const v = (a as Record<string, unknown>).onlinestorage
+    ?? (a as Record<string, unknown>).onlineStorage
+    ?? (a as Record<string, unknown>).online_storage;
+  if (v === true || v === 1) return true;
+  if (typeof v === "string") return v.toLowerCase() === "true" || v === "1";
+  return false;
+}
 
 export type AnalysesFullParams = {
   page?: number;
@@ -114,7 +131,7 @@ export function addAnalysis(payload: AnalysisPayload) {
   });
 }
 
-export function updateAnalysis(id: number, payload: AnalysisPayload) {
+export function updateAnalysis(id: number, payload: AnalysisUpdatePayload) {
   return apiRequest<Analysis>(`/analysis/update/${id}`, {
     method: "PATCH",
     body: payload,

@@ -7,6 +7,7 @@ import {
   AlignRight, GripVertical, X, Upload, Database, Minus, Combine, Globe,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
+import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { ApiError } from "@/api/client";
 import { CustomPdfTable } from "@/components/CustomPdfTable";
 import {
@@ -35,6 +36,7 @@ import {
   resizeBodyRows,
   resizeHeaderRows,
   resizeTableCols,
+  resolvePdfTemplateAnalysisId,
   setActiveTemplateId,
   setColWidthAt,
   tableHeightForRows,
@@ -91,15 +93,17 @@ function emptyTemplate(analysis?: { id: number; name: string } | null): PdfTempl
 }
 
 function NewTemplateModal({
+  laboratories,
   analyses,
   primaryColor,
   onConfirm,
   onClose,
   title = "Yangi PDF shablon",
-  description = "Qaysi analiz uchun shablon yaratilayotganini tanlang",
+  description = "Laboratoriya va analizni tanlang",
   confirmLabel = "Davom etish",
   initialAnalysisId = null,
 }: {
+  laboratories: Laboratory[];
   analyses: Analysis[];
   primaryColor: string;
   onConfirm: (analysis: Analysis) => void;
@@ -109,14 +113,27 @@ function NewTemplateModal({
   confirmLabel?: string;
   initialAnalysisId?: number | null;
 }) {
+  const initialAnalysis =
+    initialAnalysisId != null && initialAnalysisId > 0
+      ? analyses.find(a => a.id === initialAnalysisId) ?? null
+      : null;
+  const [labId, setLabId] = useState<string>(
+    initialAnalysis?.laboratory?.id ? String(initialAnalysis.laboratory.id) : "",
+  );
   const [analysisId, setAnalysisId] = useState<string>(
-    initialAnalysisId != null && initialAnalysisId > 0 ? String(initialAnalysisId) : "",
+    initialAnalysis ? String(initialAnalysis.id) : "",
   );
   const [error, setError] = useState<string | null>(null);
 
+  const labAnalyses = useMemo(() => {
+    if (!labId) return [];
+    const id = Number(labId);
+    return analyses.filter(a => a.laboratory?.id === id);
+  }, [analyses, labId]);
+
   const submit = () => {
     const id = Number(analysisId);
-    const found = analyses.find(a => a.id === id);
+    const found = labAnalyses.find(a => a.id === id) ?? analyses.find(a => a.id === id);
     if (!found) {
       setError("Analizni tanlang");
       return;
@@ -142,29 +159,50 @@ function NewTemplateModal({
           </button>
         </div>
 
-        <div className="p-6">
-          <label className="block text-xs font-semibold text-foreground mb-1.5">
-            Analiz *
-          </label>
-          <select
-            value={analysisId}
-            onChange={e => {
-              setAnalysisId(e.target.value);
-              setError(null);
-            }}
-            className={`w-full bg-secondary border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none ${
-              error ? "border-red-400" : "border-border focus:border-[var(--primary)]"
-            }`}
-          >
-            <option value="">Analizni tanlang...</option>
-            {analyses.map(a => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-                {a.laboratory?.name ? ` (${a.laboratory.name})` : ""}
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">
+              Laboratoriya *
+            </label>
+            <select
+              value={labId}
+              onChange={e => {
+                setLabId(e.target.value);
+                setAnalysisId("");
+                setError(null);
+              }}
+              className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
+            >
+              <option value="">Laboratoriyani tanlang...</option>
+              {laboratories.map(l => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-foreground mb-1.5">
+              Analiz *
+            </label>
+            <select
+              value={analysisId}
+              disabled={!labId}
+              onChange={e => {
+                setAnalysisId(e.target.value);
+                setError(null);
+              }}
+              className={`w-full bg-secondary border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none disabled:opacity-60 ${
+                error ? "border-red-400" : "border-border focus:border-[var(--primary)]"
+              }`}
+            >
+              <option value="">
+                {labId ? "Analizni tanlang..." : "Avval laboratoriya tanlang"}
               </option>
-            ))}
-          </select>
-          {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+              {labAnalyses.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            {error && <p className="text-[11px] text-red-500 mt-1">{error}</p>}
+          </div>
         </div>
 
         <div className="flex gap-3 px-6 pb-6">
@@ -203,6 +241,9 @@ export function PdfTemplateSection({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [analyses, setAnalyses] = useState<Analysis[]>([]);
+  const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
+  const [filterLabId, setFilterLabId] = useState<string>("");
+  const [filterAnalysisId, setFilterAnalysisId] = useState<string>("");
   const [loadingMeta, setLoadingMeta] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingGlobal, setSavingGlobal] = useState(false);
@@ -222,6 +263,18 @@ export function PdfTemplateSection({
     [template.elements, selectedId],
   );
 
+  const filterLabAnalyses = useMemo(() => {
+    if (!filterLabId) return [];
+    const id = Number(filterLabId);
+    return analyses.filter(a => a.laboratory?.id === id);
+  }, [analyses, filterLabId]);
+
+  const filteredTemplates = useMemo(() => {
+    if (!filterAnalysisId) return [];
+    const id = Number(filterAnalysisId);
+    return templates.filter(t => resolvePdfTemplateAnalysisId(t) === id);
+  }, [templates, filterAnalysisId]);
+
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
     const id = Date.now();
     setToasts(t => [...t, { id, text, type }]);
@@ -235,11 +288,13 @@ export function PdfTemplateSection({
   const loadMeta = async () => {
     setLoadingMeta(true);
     try {
-      const [a, remoteTemplates] = await Promise.all([
+      const [a, labs, remoteTemplates] = await Promise.all([
         getAllAnalyses(),
+        getAllLaboratories(),
         fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]),
       ]);
       setAnalyses(a);
+      setLaboratories(labs);
       applyLoadedTemplates(remoteTemplates);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Ma'lumot yuklanmadi", "error");
@@ -435,6 +490,10 @@ export function PdfTemplateSection({
     setActiveTemplateId(null);
     setNewModalOpen(false);
     setEditorOpen(true);
+    if (analysis.laboratory?.id) {
+      setFilterLabId(String(analysis.laboratory.id));
+      setFilterAnalysisId(String(analysis.id));
+    }
   };
 
   const handleConfirmImport = (analysis: Analysis) => {
@@ -447,6 +506,10 @@ export function PdfTemplateSection({
     setTableSel(null);
     setActiveTemplateId(null);
     setEditorOpen(true);
+    if (analysis.laboratory?.id) {
+      setFilterLabId(String(analysis.laboratory.id));
+      setFilterAnalysisId(String(analysis.id));
+    }
     pushToast(`"${analysis.name}" uchun ochildi — Saqlash bilan online storage'ga yoziladi`);
   };
 
@@ -463,6 +526,14 @@ export function PdfTemplateSection({
     setTableSel(null);
     setActiveTemplateId(id);
     setEditorOpen(true);
+    const analysisId = resolvePdfTemplateAnalysisId(found);
+    if (analysisId) {
+      const analysis = analyses.find(a => a.id === analysisId);
+      if (analysis?.laboratory?.id) {
+        setFilterLabId(String(analysis.laboratory.id));
+      }
+      setFilterAnalysisId(String(analysisId));
+    }
   };
 
   const handleDeleteTemplate = async (id: string) => {
@@ -557,19 +628,54 @@ export function PdfTemplateSection({
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
             <p className="text-[13px] text-muted-foreground">
-              Yangi shablon yaratish yoki saqlanganini tanlash
+              Laboratoriya va analizni tanlab, saqlangan shablonni oching
             </p>
           </div>
         )}
         <select
-          value={editorOpen && templates.some(t => t.id === template.id) ? template.id : ""}
+          value={filterLabId}
+          onChange={e => {
+            setFilterLabId(e.target.value);
+            setFilterAnalysisId("");
+          }}
+          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px]"
+        >
+          <option value="">Laboratoriya...</option>
+          {laboratories.map(l => (
+            <option key={l.id} value={l.id}>{l.name}</option>
+          ))}
+        </select>
+        <select
+          value={filterAnalysisId}
+          disabled={!filterLabId}
+          onChange={e => setFilterAnalysisId(e.target.value)}
+          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px] disabled:opacity-60"
+        >
+          <option value="">
+            {filterLabId ? "Analiz..." : "Avval laboratoriya"}
+          </option>
+          {filterLabAnalyses.map(a => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </select>
+        <select
+          value={
+            editorOpen && filteredTemplates.some(t => t.id === template.id) ? template.id : ""
+          }
+          disabled={!filterAnalysisId}
           onChange={e => {
             if (e.target.value) handleLoad(e.target.value);
           }}
-          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[220px]"
+          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[220px] disabled:opacity-60"
         >
-          <option value="">Saqlangan shablonlar...</option>
-          {templates.map(t => (
+          <option value="">
+            {!filterAnalysisId
+              ? "Avval analiz tanlang"
+              : filteredTemplates.length === 0
+                ? "Shablon topilmadi"
+                : "Saqlangan shablonlar..."}
+          </option>
+          {filteredTemplates.map(t => (
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </select>
@@ -1090,7 +1196,7 @@ export function PdfTemplateSection({
           </p>
           <p className="text-[12px] text-muted-foreground max-w-md mx-auto">
             Instrumentlar va A4 ko&apos;rinishi <strong>+ Yangi</strong> tugmasi orqali
-            analiz tanlangandan keyin ochiladi. Yoki yuqoridan saqlangan shablonni tanlang.
+            ochiladi. Yoki yuqoridan laboratoriya → analiz → saqlangan shablonni tanlang.
           </p>
           <button
             type="button"
@@ -1122,12 +1228,13 @@ export function PdfTemplateSection({
 
       {loadingMeta && (
         <div className="fixed bottom-5 left-5 z-[60] flex items-center gap-2 px-3 py-2 rounded-xl bg-card border border-border shadow text-[12px] text-muted-foreground">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Analizlar yuklanmoqda...
+          <Loader2 className="w-3.5 h-3.5 animate-spin" /> Ma&apos;lumotlar yuklanmoqda...
         </div>
       )}
 
       {newModalOpen && (
         <NewTemplateModal
+          laboratories={laboratories}
           analyses={analyses}
           primaryColor={primaryColor}
           onConfirm={handleConfirmNew}
@@ -1137,10 +1244,11 @@ export function PdfTemplateSection({
 
       {pendingImport && (
         <NewTemplateModal
+          laboratories={laboratories}
           analyses={analyses}
           primaryColor={primaryColor}
           title="Global shablonni saqlash"
-          description="Qaysi analiz uchun online storage'ga saqlashni tanlang"
+          description="Qaysi laboratoriya va analiz uchun online storage'ga saqlashni tanlang"
           confirmLabel="Tahrirlashni ochish"
           initialAnalysisId={
             analyses.some(a => a.id === pendingImport.analysisId)

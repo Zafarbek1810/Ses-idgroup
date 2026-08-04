@@ -2,7 +2,7 @@ import * as React from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
-  FlaskConical, MessageSquare, Search, UserPlus, Printer, ClipboardList,
+  FlaskConical, MessageSquare, Search, UserPlus, Printer, ClipboardList, Pencil,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -559,10 +559,12 @@ export function OrderPage({
   primaryColor,
   patientId,
   onPatientChange,
+  onEditPatient,
 }: {
   primaryColor: string;
   patientId: number | null;
   onPatientChange: (patientId: number | null) => void;
+  onEditPatient?: (patientId: number) => void;
 }) {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1035,7 +1037,20 @@ export function OrderPage({
                         {p.district?.name ?? "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <div className="flex items-center justify-end">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {onEditPatient && (
+                            <button
+                              type="button"
+                              onClick={e => {
+                                e.stopPropagation();
+                                onEditPatient(p.id);
+                              }}
+                              className="p-1.5 rounded-lg text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+                              title="Tahrirlash"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                          )}
                           <button
                             type="button"
                             onClick={e => {

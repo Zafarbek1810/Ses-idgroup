@@ -1,11 +1,12 @@
 import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Search, UserPlus, ArrowRight, Loader2, CheckCircle, AlertCircle,
   RefreshCw, ClipboardList, X, Pencil,
 } from "lucide-react";
 import {
   getPatientsFull,
+  getPatientById,
   addPatient,
   updatePatient,
   type Patient,
@@ -176,9 +177,13 @@ function Field({
 export function PatientsPage({
   primaryColor,
   onGoToOrder,
+  initialPatientId = null,
+  onInitialPatientConsumed,
 }: {
   primaryColor: string;
   onGoToOrder: (patientId: number) => void;
+  initialPatientId?: number | null;
+  onInitialPatientConsumed?: () => void;
 }) {
   const [regions, setRegions] = useState<Region[]>([]);
   const [regionsLoading, setRegionsLoading] = useState(true);
@@ -193,6 +198,8 @@ export function PatientsPage({
   const [saving, setSaving] = useState(false);
   const [updating, setUpdating] = useState(false);
   const [searched, setSearched] = useState(false);
+  const [loadingInitial, setLoadingInitial] = useState(false);
+  const loadedInitialRef = useRef<number | null>(null);
 
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
 
@@ -223,6 +230,45 @@ export function PatientsPage({
   useEffect(() => {
     void loadRegions();
   }, []);
+
+  useEffect(() => {
+    if (initialPatientId == null) {
+      loadedInitialRef.current = null;
+      return;
+    }
+    if (regionsLoading) return;
+    if (loadedInitialRef.current === initialPatientId) return;
+
+    let cancelled = false;
+    setLoadingInitial(true);
+
+    void (async () => {
+      try {
+        const patient = await getPatientById(initialPatientId);
+        if (cancelled) return;
+        loadedInitialRef.current = initialPatientId;
+        setSelectedPatientId(patient.id);
+        setForm(patientToForm(patient, regions));
+        setErrors({});
+        setMatches([]);
+        setSearched(false);
+        pushToast("Bemor ma'lumotlari yuklandi", "success");
+        onInitialPatientConsumed?.();
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof ApiError ? err.message : "Bemorni yuklab bo'lmadi";
+        pushToast(msg, "error");
+        onInitialPatientConsumed?.();
+      } finally {
+        if (!cancelled) setLoadingInitial(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- load once when navigating from kassa edit
+  }, [initialPatientId, regionsLoading, regions]);
 
   const setFilterField = <K extends keyof FilterForm>(k: K, v: FilterForm[K]) => {
     setFilter(f => ({ ...f, [k]: v }));
@@ -616,12 +662,18 @@ export function PatientsPage({
             </div>
             <div>
               <h2 className="text-[15px] font-semibold text-foreground">
-                {selectedPatientId != null ? "Bemor ma'lumotlari" : "Yangi bemor ma'lumotlari"}
+                {loadingInitial
+                  ? "Bemor yuklanmoqda..."
+                  : selectedPatientId != null
+                    ? "Bemor ma'lumotlari"
+                    : "Yangi bemor ma'lumotlari"}
               </h2>
               <p className="text-xs text-muted-foreground mt-0.5">
-                {selectedPatientId != null
-                  ? "Topilgan bemor — order yaratishga o'tishingiz mumkin"
-                  : "Ma'lumotlarni to'ldiring, keyin order sahifasiga o'ting (bemor avtomatik yaratiladi)"}
+                {loadingInitial
+                  ? "Kassa dan tanlangan bemor formaga joylanmoqda"
+                  : selectedPatientId != null
+                    ? "Topilgan bemor — order yaratishga o'tishingiz mumkin"
+                    : "Ma'lumotlarni to'ldiring, keyin order sahifasiga o'ting (bemor avtomatik yaratiladi)"}
               </p>
             </div>
           </div>

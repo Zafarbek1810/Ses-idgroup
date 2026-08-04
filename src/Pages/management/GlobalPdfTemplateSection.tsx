@@ -1,5 +1,5 @@
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Search,
   RefreshCw,
@@ -19,11 +19,12 @@ import {
 } from "lucide-react";
 import {
   deleteGlobalStorage,
-  getAllGlobalStorages,
   getGlobalStorageById,
   getGlobalStoragesFull,
   type GlobalStorage,
 } from "@/api/globalStorage";
+import { getAllAnalyses, type Analysis } from "@/api/analysis";
+import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
 import { ApiError } from "@/api/client";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
 import { formatDate } from "@/lib/formatDate";
@@ -35,30 +36,7 @@ import {
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
 
-type AnalysisOption = { id: number; name: string };
-
 const PER_PAGE = 10;
-
-/** Select uchun — getfull/getall dagi nested `analysis` obyektlaridan */
-function extractAnalysesFromRecords(records: GlobalStorage[]): AnalysisOption[] {
-  const map = new Map<number, AnalysisOption>();
-  for (const r of records) {
-    const id = Number(r.analysis?.id ?? r.analysis_id ?? r.analysisId);
-    if (!Number.isFinite(id) || id <= 0) continue;
-    const name = r.analysis?.name?.trim() || `Analiz #${id}`;
-    if (!map.has(id)) map.set(id, { id, name });
-  }
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "uz"));
-}
-
-function mergeAnalysisOptions(
-  prev: AnalysisOption[],
-  next: AnalysisOption[],
-): AnalysisOption[] {
-  const map = new Map(prev.map(a => [a.id, a]));
-  for (const a of next) map.set(a.id, a);
-  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name, "uz"));
-}
 
 export function GlobalPdfTemplateSection({
   primaryColor,
@@ -72,14 +50,22 @@ export function GlobalPdfTemplateSection({
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [labId, setLabId] = useState<string>("");
   const [analysisId, setAnalysisId] = useState<number | "">("");
-  const [analyses, setAnalyses] = useState<AnalysisOption[]>([]);
+  const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
+  const [analyses, setAnalyses] = useState<Analysis[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [viewing, setViewing] = useState<PdfTemplate | null>(null);
   const [loadingView, setLoadingView] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  const labAnalyses = useMemo(() => {
+    if (!labId) return [];
+    const id = Number(labId);
+    return analyses.filter(a => a.laboratory?.id === id);
+  }, [analyses, labId]);
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
     const id = Date.now();
@@ -109,9 +95,6 @@ export function GlobalPdfTemplateSection({
       setItems(res.data);
       setTotal(res.total);
       setPage(res.page);
-      setAnalyses(prev =>
-        mergeAnalysisOptions(prev, extractAnalysesFromRecords(res.data)),
-      );
     } catch (err) {
       setItems([]);
       setTotal(0);
@@ -123,12 +106,15 @@ export function GlobalPdfTemplateSection({
 
   useEffect(() => {
     void (async () => {
-      // Select options: barcha global yozuvlardagi analysis obyektlaridan
       try {
-        const all = await getAllGlobalStorages();
-        setAnalyses(extractAnalysesFromRecords(all));
+        const [labs, allAnalyses] = await Promise.all([
+          getAllLaboratories(),
+          getAllAnalyses(),
+        ]);
+        setLaboratories(labs);
+        setAnalyses(allAnalyses);
       } catch {
-        /* getfull dan ham to'ldiriladi */
+        /* filter selectlar bo'sh qolishi mumkin */
       }
       await load();
     })();
@@ -145,11 +131,30 @@ export function GlobalPdfTemplateSection({
     void load({ page: 1, search: q, analysis_id: analysisId });
   };
 
+  const handleLabChange = (value: string) => {
+    setLabId(value);
+    setAnalysisId("");
+    setSearch("");
+    setSearchInput("");
+    setPage(1);
+    void load({ page: 1, search: "", analysis_id: "" });
+  };
+
   const handleAnalysisChange = (value: string) => {
     const next = value ? Number(value) : "";
     setAnalysisId(next);
     setPage(1);
-    void load({ page: 1, search, analysis_id: next });
+    const analysisName =
+      typeof next === "number"
+        ? labAnalyses.find(a => a.id === next)?.name?.trim() ||
+          analyses.find(a => a.id === next)?.name?.trim() ||
+          ""
+        : "";
+    // Analiz tanlanganda getfull ga search sifatida analiz nomi yuboriladi
+    const nextSearch = analysisName || searchInput.trim();
+    setSearch(nextSearch);
+    if (analysisName) setSearchInput(analysisName);
+    void load({ page: 1, search: nextSearch, analysis_id: next });
   };
 
   const openView = async (item: GlobalStorage) => {
@@ -288,13 +293,29 @@ export function GlobalPdfTemplateSection({
               />
             </div>
             <select
+              value={labId}
+              onChange={e => handleLabChange(e.target.value)}
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)] max-w-[200px]"
+              title="Laboratoriya bo'yicha filter"
+            >
+              <option value="">Barcha laboratoriyalar</option>
+              {laboratories.map(l => (
+                <option key={l.id} value={l.id}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+            <select
               value={analysisId === "" ? "" : String(analysisId)}
+              disabled={!labId}
               onChange={e => handleAnalysisChange(e.target.value)}
-              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)] max-w-[220px]"
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)] max-w-[220px] disabled:opacity-60"
               title="Analiz bo'yicha filter"
             >
-              <option value="">Barcha analizlar</option>
-              {analyses.map(a => (
+              <option value="">
+                {labId ? "Barcha analizlar" : "Avval laboratoriya"}
+              </option>
+              {labAnalyses.map(a => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>

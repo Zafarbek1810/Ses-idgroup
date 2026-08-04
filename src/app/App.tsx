@@ -30,11 +30,28 @@ import {
   OrdersPage,
   ResultsPage,
   ShowResultPage,
+  ProfilePage,
+  EditProfilePage,
+  SettingsPage,
 } from "@/Pages";
 import {
   isShowResultRoute,
   parseShowResultParams,
 } from "@/lib/showResultLink";
+
+/** User-menu pages — available to every authenticated role. */
+const USER_PAGE_IDS = ["profile", "edit-profile", "settings"] as const;
+type UserPageId = (typeof USER_PAGE_IDS)[number];
+
+function isUserPage(id: string): id is UserPageId {
+  return (USER_PAGE_IDS as readonly string[]).includes(id);
+}
+
+const USER_PAGE_LABELS: Record<UserPageId, string> = {
+  profile: "Mening profilim",
+  "edit-profile": "Profilni tahrirlash",
+  settings: "Sozlamalar",
+};
 
 // ─── Persistence ──────────────────────────────────────────────────────────────
 
@@ -261,6 +278,7 @@ type HeaderProps = {
   isDark: boolean;
   onDarkToggle: () => void;
   onSettingsOpen: () => void;
+  onUserNav: (id: UserPageId) => void;
   sidebarCollapsed: boolean;
   onSidebarToggle: () => void;
   primaryColor: string;
@@ -269,7 +287,7 @@ type HeaderProps = {
 };
 
 const Header = ({
-  activeNav, navLabelOverride, isDark, onDarkToggle, onSettingsOpen,
+  activeNav, navLabelOverride, isDark, onDarkToggle, onSettingsOpen, onUserNav,
   sidebarCollapsed, onSidebarToggle, primaryColor, user, onLogout,
 }: HeaderProps) => {
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -287,6 +305,7 @@ const Header = ({
 
   const navLabel =
     navLabelOverride ??
+    (isUserPage(activeNav) ? USER_PAGE_LABELS[activeNav] : undefined) ??
     NAV_ITEMS.find(n => n.id === activeNav)?.label ??
     "Dashboard";
 
@@ -407,14 +426,19 @@ const Header = ({
         </button>
 
         {showUserMenu && (
-          <div className="absolute right-0 top-12 w-48 bg-card rounded-2xl border border-border shadow-xl overflow-hidden z-50">
-            {[
-              { icon: User, label: "My Profile" },
-              { icon: Edit3, label: "Edit Profile" },
-              { icon: Settings, label: "Settings" },
-            ].map(item => (
+          <div className="absolute right-0 top-12 w-52 bg-card rounded-2xl border border-border shadow-xl overflow-hidden z-50">
+            {([
+              { id: "profile" as const, icon: User, label: "Mening profilim" },
+              { id: "edit-profile" as const, icon: Edit3, label: "Profilni tahrirlash" },
+              { id: "settings" as const, icon: Settings, label: "Sozlamalar" },
+            ]).map(item => (
               <button
-                key={item.label}
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  setShowUserMenu(false);
+                  onUserNav(item.id);
+                }}
                 className="w-full flex items-center gap-3 px-4 py-3 text-[13px] text-foreground hover:bg-secondary transition-colors"
               >
                 <item.icon className="w-4 h-4 text-muted-foreground" />
@@ -428,7 +452,7 @@ const Header = ({
                 className="w-full flex items-center gap-3 px-4 py-3 text-[13px] text-red-500 hover:bg-red-50 dark:hover:bg-red-950/25 transition-colors"
               >
                 <LogOut className="w-4 h-4" />
-                Logout
+                Chiqish
               </button>
             </div>
           </div>
@@ -611,24 +635,34 @@ type DashboardProps = {
   isDark: boolean;
   onDarkToggle: () => void;
   onSettingsOpen: () => void;
+  onColorChange: (c: string) => void;
   darkMode: "light" | "dark" | "system";
+  onDarkModeChange: (m: "light" | "dark" | "system") => void;
   user: AuthUser | null;
+  onUserUpdated: (user: AuthUser) => void;
   onLogout: () => void;
 };
 
-const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, onLogout }: DashboardProps) => {
+const Dashboard = ({
+  primaryColor, isDark, onDarkToggle, onSettingsOpen,
+  onColorChange, darkMode, onDarkModeChange,
+  user, onUserUpdated, onLogout,
+}: DashboardProps) => {
   const roleName = user?.role?.name ?? null;
   const allowedNavIds = useMemo(() => getAllowedNavIds(roleName), [roleName]);
   const defaultNav = useMemo(() => getDefaultNavId(roleName), [roleName]);
 
   const [collapsed, setCollapsed] = useState(false);
-  const [activeNav, setActiveNav] = useState(defaultNav);
+  const [activeNav, setActiveNav] = useState<string>(defaultNav);
   const [orderPatientId, setOrderPatientId] = useState<number | null>(null);
+  const [editPatientId, setEditPatientId] = useState<number | null>(null);
 
   useEffect(() => {
+    if (isUserPage(activeNav)) return;
     if (!canAccessNav(roleName, activeNav)) {
       setActiveNav(defaultNav);
       setOrderPatientId(null);
+      setEditPatientId(null);
     }
   }, [roleName, activeNav, defaultNav]);
 
@@ -636,15 +670,60 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
     if (!canAccessNav(roleName, id)) return;
     setActiveNav(id);
     if (id !== "kassa") setOrderPatientId(null);
+    if (id !== "patients") setEditPatientId(null);
+  };
+
+  const handleUserNav = (id: UserPageId) => {
+    setOrderPatientId(null);
+    setEditPatientId(null);
+    setActiveNav(id);
   };
 
   const handleGoToOrder = (patientId: number) => {
     if (!canAccessNav(roleName, "kassa")) return;
+    setEditPatientId(null);
     setOrderPatientId(patientId);
     setActiveNav("kassa");
   };
 
+  const handleEditPatient = (patientId: number) => {
+    if (!canAccessNav(roleName, "patients")) return;
+    setOrderPatientId(null);
+    setEditPatientId(patientId);
+    setActiveNav("patients");
+  };
+
   const renderPage = () => {
+    if (activeNav === "profile") {
+      return (
+        <ProfilePage
+          primaryColor={primaryColor}
+          user={user}
+          onEditProfile={() => setActiveNav("edit-profile")}
+        />
+      );
+    }
+    if (activeNav === "edit-profile") {
+      return (
+        <EditProfilePage
+          primaryColor={primaryColor}
+          user={user}
+          onUserUpdated={onUserUpdated}
+          onBackToProfile={() => setActiveNav("profile")}
+        />
+      );
+    }
+    if (activeNav === "settings") {
+      return (
+        <SettingsPage
+          primaryColor={primaryColor}
+          onColorChange={onColorChange}
+          darkMode={darkMode}
+          onDarkModeChange={onDarkModeChange}
+        />
+      );
+    }
+
     if (!canAccessNav(roleName, activeNav)) return null;
     if (activeNav === "kassa") {
       return (
@@ -652,13 +731,21 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
           primaryColor={primaryColor}
           patientId={orderPatientId}
           onPatientChange={setOrderPatientId}
+          onEditPatient={handleEditPatient}
         />
       );
     }
     if (activeNav === "orders") return <OrdersPage primaryColor={primaryColor} />;
     if (activeNav === "results") return <ResultsPage primaryColor={primaryColor} />;
     if (activeNav === "patients") {
-      return <PatientsPage primaryColor={primaryColor} onGoToOrder={handleGoToOrder} />;
+      return (
+        <PatientsPage
+          primaryColor={primaryColor}
+          onGoToOrder={handleGoToOrder}
+          initialPatientId={editPatientId}
+          onInitialPatientConsumed={() => setEditPatientId(null)}
+        />
+      );
     }
     if (activeNav === "employees") return <EmployeesPage primaryColor={primaryColor} />;
     if (activeNav === "management") return <ManagementPage primaryColor={primaryColor} />;
@@ -682,6 +769,7 @@ const Dashboard = ({ primaryColor, isDark, onDarkToggle, onSettingsOpen, user, o
           isDark={isDark}
           onDarkToggle={onDarkToggle}
           onSettingsOpen={onSettingsOpen}
+          onUserNav={handleUserNav}
           sidebarCollapsed={collapsed}
           onSidebarToggle={() => setCollapsed(c => !c)}
           primaryColor={primaryColor}
@@ -811,8 +899,11 @@ export default function App() {
           isDark={isDark}
           onDarkToggle={() => setDarkMode(isDark ? "light" : "dark")}
           onSettingsOpen={() => setSettingsOpen(true)}
+          onColorChange={setPrimaryColor}
           darkMode={darkMode}
+          onDarkModeChange={setDarkMode}
           user={user}
+          onUserUpdated={setUser}
           onLogout={handleLogout}
         />
       )}

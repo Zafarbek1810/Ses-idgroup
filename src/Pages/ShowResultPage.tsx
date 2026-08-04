@@ -186,6 +186,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
           patientFullName: patientName(order.patient, order.name),
           patientAddress: buildAddress(order, order.patient),
           patientBirthDay: order.patient?.birth_day ?? null,
+          patientRegisteredAt: order.patient?.createdAt ?? null,
           patientPhone: order.patient?.phone ?? null,
           labDoctor: labDoctorFromResult(result),
           labAssistant: labAssistantFromResult(result),

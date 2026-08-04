@@ -2,7 +2,7 @@ import * as React from "react";
 import { useEffect, useState } from "react";
 import {
   Plus, Search, X, Edit3, Trash2, RefreshCw, TestTube2,
-  CheckCircle, AlertCircle, Loader2, FlaskConical,
+  CheckCircle, AlertCircle, Loader2, FlaskConical, FileText,
   ChevronLeft, ChevronsLeft, ChevronsRight,
 } from "lucide-react";
 import {
@@ -10,6 +10,7 @@ import {
   addAnalysis,
   updateAnalysis,
   deleteAnalysis,
+  analysisHasOnlineStorage,
   type Analysis,
   type AnalysisPayload,
 } from "@/api/analysis";
@@ -361,7 +362,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-secondary/40">
-                {["Analiz", "Qisqa nom", "Narx", "Laboratoriya", "Yaratilgan", ""].map((h, i) => (
+                {["Analiz", "Qisqa nom", "Narx", "Laboratoriya", "Yaratilgan", "Shablon", ""].map((h, i) => (
                   <th key={i} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-5 py-3 whitespace-nowrap">
                     {h}
                   </th>
@@ -371,7 +372,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-16 text-center">
+                  <td colSpan={7} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 className="w-6 h-6 animate-spin" style={{ color: primaryColor }} />
                       <p className="text-sm text-muted-foreground">Yuklanmoqda…</p>
@@ -380,7 +381,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-5 py-16 text-center">
+                  <td colSpan={7} className="px-5 py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
                       <div className="w-14 h-14 rounded-2xl bg-secondary flex items-center justify-center">
                         <TestTube2 className="w-6 h-6 text-muted-foreground" />
@@ -434,6 +435,18 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
                     </td>
                     <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
                       {formatDate(item.createdAt)}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {analysisHasOnlineStorage(item) ? (
+                        <span title="PDF shablon mavjud" className="inline-flex">
+                          <FileText
+                            className="w-4 h-4"
+                            style={{ color: primaryColor }}
+                          />
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-muted-foreground">—</span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

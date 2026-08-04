@@ -161,6 +161,7 @@ function buildDynamicContext(
     patientFullName: patientNameFromOrder(patient, order?.name),
     patientAddress: order ? buildAddress(order, patient) : null,
     patientBirthDay: patient?.birth_day ?? null,
+    patientRegisteredAt: patient?.createdAt ?? null,
     patientPhone: patient?.phone ?? null,
     labDoctor: isAssistant ? null : shortName,
     labAssistant: isAssistant ? shortName : null,

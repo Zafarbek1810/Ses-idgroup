@@ -37,6 +37,7 @@ export type PdfElementType =
 export type PdfDynamicFieldKey =
   | "order_number"
   | "order_created_at"
+  | "result_id"
   | "result_date"
   | "patient_full_name"
   | "patient_address"
@@ -68,6 +69,12 @@ export const DYNAMIC_FIELDS: PdfDynamicFieldDef[] = [
     label: "Murojaat",
     sample: "Sanasi/vaqti",
     hint: "Murojaat sanasi/vaqti",
+  },
+  {
+    key: "result_id",
+    label: "Natija ID",
+    sample: "Raqam #",
+    hint: "Result id",
   },
   {
     key: "patient_full_name",
@@ -133,6 +140,7 @@ export function getDynamicFieldDef(key: PdfDynamicFieldKey | null | undefined) {
 export type PdfDynamicContext = {
   orderId?: number | null;
   orderCreatedAt?: string | null;
+  resultId?: number | null;
   resultDate?: string | null;
   patientFullName?: string | null;
   patientAddress?: string | null;
@@ -180,6 +188,8 @@ export function resolveDynamicValue(
       return pick(ctx.orderId);
     case "order_created_at":
       return pick(formatPdfDateTime(ctx.orderCreatedAt) || null);
+    case "result_id":
+      return pick(ctx.resultId);
     case "result_date":
       return pick(formatPdfDateTime(ctx.resultDate) || formatPdfDateTime(ctx.orderCreatedAt) || null);
     case "patient_full_name":

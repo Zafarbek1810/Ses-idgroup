@@ -236,6 +236,7 @@ export function OrderResultsReview({
           dynamicCtx: {
             orderId,
             orderCreatedAt: item.createdAt || orderData.createdAt || null,
+            resultId: resultRec?.id ?? null,
             resultDate: resultRec?.updatedAt || resultRec?.createdAt || new Date().toISOString(),
             patientFullName: patientName(orderData.patient, orderData.name),
             patientAddress: buildAddress(orderData, orderData.patient),

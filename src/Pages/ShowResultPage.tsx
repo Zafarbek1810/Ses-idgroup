@@ -179,6 +179,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
         const dynamicCtx: PdfDynamicContext = {
           orderId: order.id,
           orderCreatedAt: orderItem?.createdAt || order.createdAt || null,
+          resultId: result?.id ?? null,
           resultDate: result?.updatedAt || result?.createdAt || new Date().toISOString(),
           patientFullName: patientName(order.patient, order.name),
           patientAddress: buildAddress(order, order.patient),

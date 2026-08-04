@@ -154,6 +154,7 @@ function buildDynamicContext(
   return {
     orderId: row.orderId,
     orderCreatedAt: order?.createdAt || row.orderCreatedAt || null,
+    resultId: result?.id ?? row.resultId ?? null,
     resultDate: result?.updatedAt || result?.createdAt || new Date().toISOString(),
     patientFullName: patientNameFromOrder(patient, order?.name),
     patientAddress: order ? buildAddress(order, patient) : null,

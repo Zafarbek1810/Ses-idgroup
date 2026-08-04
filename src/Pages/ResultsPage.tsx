@@ -43,6 +43,7 @@ import {
   isDynamicCell,
   loadPdfTemplates,
   normalizeTableData,
+  resolveStoredCompanyName,
   type PdfDynamicContext,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
@@ -141,6 +142,7 @@ function buildDynamicContext(
   row: OrderAnalysisRow,
   order: Order | null,
   result: ResultRecord | null,
+  companyName?: string | null,
 ): PdfDynamicContext {
   const patient = order?.patient;
   const user = getStoredUser();
@@ -162,6 +164,7 @@ function buildDynamicContext(
     patientPhone: patient?.phone ?? null,
     labDoctor: isAssistant ? null : shortName,
     labAssistant: isAssistant ? shortName : null,
+    companyName: companyName ?? null,
     analysisName: row.analysisName,
     laboratoryName: row.laboratoryName !== "—" ? row.laboratoryName : null,
   };
@@ -318,6 +321,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         /* optional */
       }
 
+      const companyName = await resolveStoredCompanyName();
+
       let resultRec: ResultRecord | null = null;
       let savedItems: ReturnType<typeof getResultItems> = [];
       const cachedRec = findResultByOrderId(resultsCache, row.orderId);
@@ -344,7 +349,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
         }
       }
 
-      setDynamicCtx(buildDynamicContext(row, order, resultRec));
+      setDynamicCtx(buildDynamicContext(row, order, resultRec, companyName));
       const saved = decodeGridFillFromItems(savedItems, row.analysisId);
       setFillValues(seedFillFromTemplate(tpl, saved));
 

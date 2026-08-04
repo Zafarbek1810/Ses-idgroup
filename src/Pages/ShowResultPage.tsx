@@ -29,6 +29,7 @@ import {
   isDynamicCell,
   normalizeTableData,
   onlineStorageRecordToPdfTemplate,
+  resolveStoredCompanyName,
   type PdfDynamicContext,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
@@ -175,6 +176,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
         const savedItems = getResultItems(result);
         const saved = decodeGridFillFromItems(savedItems, analysisId);
         const fillValues = seedFillFromTemplate(bound, saved);
+        const companyName = await resolveStoredCompanyName();
 
         const dynamicCtx: PdfDynamicContext = {
           orderId: order.id,
@@ -187,6 +189,7 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
           patientPhone: order.patient?.phone ?? null,
           labDoctor: labDoctorFromResult(result),
           labAssistant: labAssistantFromResult(result),
+          companyName,
           analysisName,
           laboratoryName,
         };

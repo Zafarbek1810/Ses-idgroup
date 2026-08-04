@@ -14,7 +14,8 @@ import {
   updateGlobalStorage,
   type GlobalStorage,
 } from "@/api/globalStorage";
-import { getStoredCompanyId } from "@/api/session";
+import { getStoredCompanyId, getStoredUser } from "@/api/session";
+import { getCompanyById } from "@/api/company";
 
 export type PdfTextStyle = {
   bold?: boolean;
@@ -45,6 +46,7 @@ export type PdfDynamicFieldKey =
   | "patient_phone"
   | "lab_doctor"
   | "lab_assistant"
+  | "company_name"
   | "analysis_name"
   | "laboratory_name";
 
@@ -119,6 +121,12 @@ export const DYNAMIC_FIELDS: PdfDynamicFieldDef[] = [
     hint: "Laboratoriya assistenti",
   },
   {
+    key: "company_name",
+    label: "Kompaniya nomi",
+    sample: "Kompaniya nomi",
+    hint: "Joriy kompaniya",
+  },
+  {
     key: "analysis_name",
     label: "Analiz",
     sample: "Analiz nomi",
@@ -148,6 +156,7 @@ export type PdfDynamicContext = {
   patientPhone?: string | null;
   labDoctor?: string | null;
   labAssistant?: string | null;
+  companyName?: string | null;
   analysisName?: string | null;
   laboratoryName?: string | null;
 };
@@ -168,6 +177,21 @@ export function formatPdfDate(iso?: string | null): string {
   if (Number.isNaN(d.getTime())) return String(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${pad(d.getDate())}.${pad(d.getMonth() + 1)}.${d.getFullYear()}`;
+}
+
+/** localStorage `ses_company_id` → `/company/getby/:id` nomi */
+export async function resolveStoredCompanyName(): Promise<string | null> {
+  const fallback = getStoredUser()?.company?.name?.trim() || null;
+  const companyId = getStoredCompanyId();
+  if (companyId == null || companyId <= 0) return fallback;
+
+  try {
+    const company = await getCompanyById(companyId);
+    const name = company?.name?.trim();
+    return name || fallback;
+  } catch {
+    return fallback;
+  }
 }
 
 export function resolveDynamicValue(
@@ -204,6 +228,8 @@ export function resolveDynamicValue(
       return pick(ctx.labDoctor);
     case "lab_assistant":
       return pick(ctx.labAssistant);
+    case "company_name":
+      return pick(ctx.companyName);
     case "analysis_name":
       return pick(ctx.analysisName);
     case "laboratory_name":

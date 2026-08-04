@@ -41,6 +41,7 @@ import {
   isDynamicCell,
   loadPdfTemplates,
   normalizeTableData,
+  resolveStoredCompanyName,
   type PdfDynamicContext,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
@@ -213,6 +214,7 @@ export function OrderResultsReview({
         : null;
       const role = normalizeRoleName(userDoc?.role?.name);
       const isAssistant = role === "lab_asistant";
+      const companyName = await resolveStoredCompanyName();
 
       const nextViews: AnalysisPdfView[] = [];
       for (const item of (orderData.items ?? []) as OrderItem[]) {
@@ -244,6 +246,7 @@ export function OrderResultsReview({
             patientPhone: orderData.patient?.phone ?? null,
             labDoctor: isAssistant ? null : shortName,
             labAssistant: isAssistant ? shortName : null,
+            companyName,
             analysisName,
             laboratoryName: laboratoryName !== "—" ? laboratoryName : null,
           },

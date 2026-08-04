@@ -95,13 +95,23 @@ function NewTemplateModal({
   primaryColor,
   onConfirm,
   onClose,
+  title = "Yangi PDF shablon",
+  description = "Qaysi analiz uchun shablon yaratilayotganini tanlang",
+  confirmLabel = "Davom etish",
+  initialAnalysisId = null,
 }: {
   analyses: Analysis[];
   primaryColor: string;
   onConfirm: (analysis: Analysis) => void;
   onClose: () => void;
+  title?: string;
+  description?: string;
+  confirmLabel?: string;
+  initialAnalysisId?: number | null;
 }) {
-  const [analysisId, setAnalysisId] = useState<string>("");
+  const [analysisId, setAnalysisId] = useState<string>(
+    initialAnalysisId != null && initialAnalysisId > 0 ? String(initialAnalysisId) : "",
+  );
   const [error, setError] = useState<string | null>(null);
 
   const submit = () => {
@@ -120,10 +130,8 @@ function NewTemplateModal({
       <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-md overflow-hidden">
         <div className="flex items-center justify-between px-6 py-5 border-b border-border">
           <div>
-            <h2 className="font-semibold text-foreground text-[15px]">Yangi PDF shablon</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              Qaysi analiz uchun shablon yaratilayotganini tanlang
-            </p>
+            <h2 className="font-semibold text-foreground text-[15px]">{title}</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
           </div>
           <button
             type="button"
@@ -173,7 +181,7 @@ function NewTemplateModal({
             className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white transition-all hover:opacity-90 active:scale-[0.98]"
             style={{ background: primaryColor }}
           >
-            Davom etish
+            {confirmLabel}
           </button>
         </div>
       </div>
@@ -200,6 +208,7 @@ export function PdfTemplateSection({
   const [savingGlobal, setSavingGlobal] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [newModalOpen, setNewModalOpen] = useState(false);
+  const [pendingImport, setPendingImport] = useState<PdfTemplate | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [dragTool, setDragTool] = useState<DragPayload | null>(null);
@@ -243,17 +252,16 @@ export function PdfTemplateSection({
     void loadMeta();
   }, []);
 
-  // Global PDF tab → "Tahrirlash": open editor with imported clone
+  // Global PDF tab → "Tahrirlash": avval analiz tanlash, keyin editor
   useEffect(() => {
     if (!importTemplate) return;
-    setTemplate(structuredClone(importTemplate));
+    setPendingImport(structuredClone(importTemplate));
     setSelectedId(null);
     setEditingId(null);
     setTableSel(null);
     setActiveTemplateId(null);
-    setEditorOpen(true);
+    setEditorOpen(false);
     onImportConsumed?.();
-    pushToast("Global shablon tahrirlash uchun ochildi — o'z storage'ga saqlang");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once per import
   }, [importTemplate]);
 
@@ -263,6 +271,18 @@ export function PdfTemplateSection({
       propsPanelRef.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
   }, [selectedId]);
+
+  const bindTemplateAnalysis = (tpl: PdfTemplate, analysis: Analysis): PdfTemplate => {
+    const next = structuredClone(tpl);
+    next.analysisId = analysis.id;
+    next.analysisName = analysis.name;
+    for (const el of next.elements) {
+      if (el.type !== "table") continue;
+      el.analysisId = analysis.id;
+      el.analysisName = analysis.name;
+    }
+    return next;
+  };
 
   const updateElement = (id: string, patch: Partial<PdfElement>) => {
     setTemplate(t => ({
@@ -415,6 +435,23 @@ export function PdfTemplateSection({
     setActiveTemplateId(null);
     setNewModalOpen(false);
     setEditorOpen(true);
+  };
+
+  const handleConfirmImport = (analysis: Analysis) => {
+    if (!pendingImport) return;
+    const t = bindTemplateAnalysis(pendingImport, analysis);
+    setTemplate(t);
+    setPendingImport(null);
+    setSelectedId(null);
+    setEditingId(null);
+    setTableSel(null);
+    setActiveTemplateId(null);
+    setEditorOpen(true);
+    pushToast(`"${analysis.name}" uchun ochildi — Saqlash bilan online storage'ga yoziladi`);
+  };
+
+  const handleCancelImport = () => {
+    setPendingImport(null);
   };
 
   const handleLoad = (id: string) => {
@@ -1095,6 +1132,23 @@ export function PdfTemplateSection({
           primaryColor={primaryColor}
           onConfirm={handleConfirmNew}
           onClose={() => setNewModalOpen(false)}
+        />
+      )}
+
+      {pendingImport && (
+        <NewTemplateModal
+          analyses={analyses}
+          primaryColor={primaryColor}
+          title="Global shablonni saqlash"
+          description="Qaysi analiz uchun online storage'ga saqlashni tanlang"
+          confirmLabel="Tahrirlashni ochish"
+          initialAnalysisId={
+            analyses.some(a => a.id === pendingImport.analysisId)
+              ? pendingImport.analysisId
+              : null
+          }
+          onConfirm={handleConfirmImport}
+          onClose={handleCancelImport}
         />
       )}
     </div>

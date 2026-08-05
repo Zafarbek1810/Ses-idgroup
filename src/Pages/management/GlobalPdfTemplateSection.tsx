@@ -60,6 +60,7 @@ export function GlobalPdfTemplateSection({
   const [viewing, setViewing] = useState<PdfTemplate | null>(null);
   const [loadingView, setLoadingView] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<GlobalStorage | null>(null);
 
   const labAnalyses = useMemo(() => {
     if (!labId) return [];
@@ -179,12 +180,14 @@ export function GlobalPdfTemplateSection({
     onEditTemplate(cloneGlobalTemplateForLocalEdit(viewing));
   };
 
-  const handleDelete = async (item: GlobalStorage) => {
-    if (!window.confirm(`"${item.name}" global shablonini o'chirasizmi?`)) return;
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    const item = deleteTarget;
     setDeletingId(item.id);
     try {
       await deleteGlobalStorage(item.id);
       if (viewing?.globalStorageId === item.id) setViewing(null);
+      setDeleteTarget(null);
       pushToast("Global shablon o'chirildi");
       const nextTotal = Math.max(0, total - 1);
       const nextPage =
@@ -477,7 +480,7 @@ export function GlobalPdfTemplateSection({
                         </button>
                         <button
                           type="button"
-                          onClick={() => void handleDelete(item)}
+                          onClick={() => setDeleteTarget(item)}
                           disabled={deletingId === item.id}
                           className="p-1.5 rounded-lg hover:bg-red-50 hover:text-red-500 text-muted-foreground transition-colors disabled:opacity-50"
                           title="O'chirish"
@@ -585,6 +588,48 @@ export function GlobalPdfTemplateSection({
           </div>
         </div>
       </div>
+
+      {deleteTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => !deletingId && setDeleteTarget(null)}
+          />
+          <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-500" />
+              </div>
+              <h2 className="text-[16px] font-bold text-foreground mb-2">
+                Global shablonni o&apos;chirish
+              </h2>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-foreground">{deleteTarget.name}</span>
+                {" "}ni o&apos;chirishni xohlaysizmi?
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deletingId != null}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete()}
+                disabled={deletingId != null}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                {deletingId != null && <Loader2 className="w-4 h-4 animate-spin" />}
+                Ha, o&apos;chirish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="fixed bottom-6 right-6 z-50 flex flex-col gap-2">
         {toasts.map(t => (

@@ -248,6 +248,8 @@ export function PdfTemplateSection({
   const [saving, setSaving] = useState(false);
   const [savingGlobal, setSavingGlobal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [elementDeleteId, setElementDeleteId] = useState<string | null>(null);
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PdfTemplate | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
@@ -359,6 +361,12 @@ export function PdfTemplateSection({
     setTemplate(t => ({ ...t, elements: t.elements.filter(el => el.id !== id) }));
     if (selectedId === id) setSelectedId(null);
     if (editingId === id) setEditingId(null);
+    setElementDeleteId(null);
+  };
+
+  const confirmRemoveElement = () => {
+    if (!elementDeleteId) return;
+    removeElement(elementDeleteId);
   };
 
   const selectElement = (id: string, options?: { keepTableSel?: boolean }) => {
@@ -536,9 +544,14 @@ export function PdfTemplateSection({
     }
   };
 
-  const handleDeleteTemplate = async (id: string) => {
+  const handleDeleteTemplate = async () => {
+    const id = deleteConfirmId;
+    if (!id) return;
     const target = templates.find(t => t.id === id) ?? (template.id === id ? template : null);
-    if (!target) return;
+    if (!target) {
+      setDeleteConfirmId(null);
+      return;
+    }
     setDeleting(true);
     try {
       await deletePdfTemplateRemote(target);
@@ -551,6 +564,7 @@ export function PdfTemplateSection({
         setTableSel(null);
         setEditorOpen(false);
       }
+      setDeleteConfirmId(null);
       pushToast("Shablon o'chirildi");
     } catch (err) {
       pushToast(
@@ -565,6 +579,12 @@ export function PdfTemplateSection({
       setDeleting(false);
     }
   };
+
+  const deleteConfirmTarget =
+    deleteConfirmId != null
+      ? templates.find(t => t.id === deleteConfirmId) ??
+        (template.id === deleteConfirmId ? template : null)
+      : null;
 
   const applyImageFile = (file: File | null, elementId: string) => {
     if (!file) return;
@@ -719,15 +739,11 @@ export function PdfTemplateSection({
             {templates.some(t => t.id === template.id) && (
               <button
                 type="button"
-                onClick={() => void handleDeleteTemplate(template.id)}
+                onClick={() => setDeleteConfirmId(template.id)}
                 disabled={saving || savingGlobal || deleting}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold text-red-600 bg-red-500/10 hover:bg-red-500/15 disabled:opacity-50"
               >
-                {deleting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-3.5 h-3.5" />
-                )}
+                <Trash2 className="w-3.5 h-3.5" />
                 O&apos;chirish
               </button>
             )}
@@ -769,7 +785,7 @@ export function PdfTemplateSection({
                   </div>
                   <button
                     type="button"
-                    onClick={() => removeElement(selected.id)}
+                    onClick={() => setElementDeleteId(selected.id)}
                     className="p-1.5 rounded-lg text-red-500 hover:bg-red-500/10"
                     title="O'chirish"
                   >
@@ -1181,7 +1197,7 @@ export function PdfTemplateSection({
                   onEndEdit={() => setEditingId(null)}
                   onDrag={handleElementDrag}
                   onResize={handleElementResize}
-                  onRemove={() => removeElement(el.id)}
+                  onRemove={() => setElementDeleteId(el.id)}
                 />
               ))}
             </div>
@@ -1258,6 +1274,86 @@ export function PdfTemplateSection({
           onConfirm={handleConfirmImport}
           onClose={handleCancelImport}
         />
+      )}
+
+      {deleteConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => !deleting && setDeleteConfirmId(null)}
+          />
+          <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-500" />
+              </div>
+              <h2 className="text-[16px] font-bold text-foreground mb-2">Shablonni o&apos;chirish</h2>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-foreground">
+                  {deleteConfirmTarget.name || "Nomsiz shablon"}
+                </span>
+                {" "}ni o&apos;chirishni xohlaysizmi?
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setDeleteConfirmId(null)}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDeleteTemplate()}
+                disabled={deleting}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors active:scale-[0.98] flex items-center justify-center gap-2"
+              >
+                {deleting && <Loader2 className="w-4 h-4 animate-spin" />}
+                Ha, o&apos;chirish
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {elementDeleteId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => setElementDeleteId(null)}
+          />
+          <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <Trash2 className="w-6 h-6 text-red-500" />
+              </div>
+              <h2 className="text-[16px] font-bold text-foreground mb-2">
+                Elementni o&apos;chirish
+              </h2>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                Tanlangan elementni o&apos;chirishni xohlaysizmi?
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setElementDeleteId(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                type="button"
+                onClick={confirmRemoveElement}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors active:scale-[0.98]"
+              >
+                Ha, o&apos;chirish
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

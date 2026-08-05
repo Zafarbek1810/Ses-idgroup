@@ -591,6 +591,7 @@ export function OrderPage({
   const [paidAmount, setPaidAmount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
+  const [removeTargetKey, setRemoveTargetKey] = useState<string | null>(null);
 
   const pushToast = (text: string, type: ToastMsg["type"]) => {
     const id = Date.now() + Math.random();
@@ -751,7 +752,12 @@ export function OrderPage({
   const handleRemoveItem = (key: string) => {
     setItems(list => list.filter(i => i.key !== key));
     setPaymentPaid(false);
+    setRemoveTargetKey(null);
   };
+
+  const removeTarget = removeTargetKey
+    ? items.find(i => i.key === removeTargetKey) ?? null
+    : null;
 
   const openPaymentModal = () => {
     if (items.length === 0) {
@@ -1158,7 +1164,7 @@ export function OrderPage({
                             </div>
                             <button
                               type="button"
-                              onClick={() => handleRemoveItem(item.key)}
+                              onClick={() => setRemoveTargetKey(item.key)}
                               className="p-1 rounded-lg text-muted-foreground hover:text-red-500 hover:bg-red-500/10 transition-colors shrink-0"
                               title="O'chirish"
                             >
@@ -1407,6 +1413,47 @@ export function OrderPage({
           totalBeforeDiscount={totalPrice}
           onClose={() => setReceiptOpen(false)}
         />
+      )}
+
+      {removeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/45 backdrop-blur-sm"
+            onClick={() => setRemoveTargetKey(null)}
+          />
+          <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="p-6 text-center">
+              <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center mx-auto mb-4">
+                <X className="w-6 h-6 text-red-500" />
+              </div>
+              <h2 className="text-[16px] font-bold text-foreground mb-2">
+                Analizni o&apos;chirish
+              </h2>
+              <p className="text-[13px] text-muted-foreground leading-relaxed">
+                <span className="font-semibold text-foreground">
+                  {removeTarget.analysis_name}
+                </span>
+                {" "}ni ro&apos;yxatdan o&apos;chirishni xohlaysizmi?
+              </p>
+            </div>
+            <div className="flex gap-3 px-6 pb-6">
+              <button
+                type="button"
+                onClick={() => setRemoveTargetKey(null)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+              >
+                Bekor qilish
+              </button>
+              <button
+                type="button"
+                onClick={() => handleRemoveItem(removeTarget.key)}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium text-white bg-red-500 hover:bg-red-600 transition-colors active:scale-[0.98]"
+              >
+                Ha, o&apos;chirish
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </main>
   );

@@ -132,7 +132,8 @@ function AssistantsModal({
   onClose: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<number | "">("");
-  const attachedIds = new Set(lab.lab_assistants.map(a => a.id));
+  const assistants = Array.isArray(lab.lab_assistants) ? lab.lab_assistants : [];
+  const attachedIds = new Set(assistants.map(a => a.id));
   const available = users.filter(u => !attachedIds.has(u.id));
 
   return (
@@ -195,7 +196,7 @@ function AssistantsModal({
               </div>
             ) : (
               <div className="space-y-2">
-                {lab.lab_assistants.map(a => (
+                {assistants.map(a => (
                   <div
                     key={a.id}
                     className="flex items-center justify-between gap-3 rounded-xl border border-border bg-secondary/40 px-3.5 py-2.5"

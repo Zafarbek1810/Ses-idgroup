@@ -81,9 +81,17 @@ function normalizeFullResponse(
 }
 
 export function getAllLaboratories() {
-  return apiRequest<Laboratory[]>("/laboratory/getall", {
+  return apiRequest<unknown>("/laboratory/getall", {
     method: "GET",
     fallbackError: "Laboratoriyalarni yuklab bo'lmadi",
+  }).then(raw => {
+    if (Array.isArray(raw)) return raw as Laboratory[];
+    if (raw && typeof raw === "object") {
+      const obj = raw as Record<string, unknown>;
+      const data = obj.data ?? obj.laboratories ?? obj.items ?? obj.result;
+      if (Array.isArray(data)) return data as Laboratory[];
+    }
+    return [] as Laboratory[];
   });
 }
 

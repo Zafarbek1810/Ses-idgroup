@@ -1016,6 +1016,67 @@ export function defaultStyleForType(type: PdfElementType): PdfTextStyle {
   }
 }
 
+const PDF_ELEMENT_TYPES = new Set<PdfElementType>([
+  "heading1",
+  "heading2",
+  "heading3",
+  "text",
+  "image",
+  "table",
+  "dynamic",
+]);
+
+/** Harden API/localStorage payloads so missing `style` etc. cannot crash the editor. */
+export function normalizePdfElement(raw: unknown): PdfElement | null {
+  if (!raw || typeof raw !== "object") return null;
+  const el = raw as Record<string, unknown>;
+  const type = el.type as PdfElementType;
+  if (!PDF_ELEMENT_TYPES.has(type)) return null;
+
+  const size = defaultSizeForType(type);
+  const styleRaw =
+    el.style && typeof el.style === "object" && !Array.isArray(el.style)
+      ? (el.style as PdfTextStyle)
+      : {};
+
+  const analysisIdRaw = Number(el.analysisId);
+  const dynamicKey =
+    type === "dynamic" && typeof el.dynamicKey === "string"
+      ? (el.dynamicKey as PdfDynamicFieldKey)
+      : type === "dynamic"
+        ? null
+        : null;
+
+  return {
+    id: typeof el.id === "string" && el.id ? el.id : createElementId(),
+    type,
+    x: Number.isFinite(Number(el.x)) ? Number(el.x) : 0,
+    y: Number.isFinite(Number(el.y)) ? Number(el.y) : 0,
+    width: Number.isFinite(Number(el.width)) && Number(el.width) > 0 ? Number(el.width) : size.width,
+    height:
+      Number.isFinite(Number(el.height)) && Number(el.height) > 0 ? Number(el.height) : size.height,
+    content: el.content == null ? defaultContentForType(type) : String(el.content),
+    imageSrc: typeof el.imageSrc === "string" ? el.imageSrc : undefined,
+    analysisId:
+      Number.isFinite(analysisIdRaw) && analysisIdRaw > 0 ? analysisIdRaw : null,
+    analysisName: typeof el.analysisName === "string" ? el.analysisName : "",
+    tableData: type === "table" ? normalizeTableData(el.tableData as PdfTableData | undefined) : undefined,
+    dynamicKey,
+    showDynamicLabel:
+      type === "dynamic"
+        ? el.showDynamicLabel !== false
+        : undefined,
+    style: { ...defaultStyleForType(type), ...styleRaw },
+  };
+}
+
+export function normalizePdfElements(raw: unknown): PdfElement[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map(normalizePdfElement)
+    .filter((el): el is PdfElement => el != null);
+}
+
 export function defaultContentForType(type: PdfElementType): string {
   switch (type) {
     case "heading1":
@@ -1191,8 +1252,8 @@ export function resolvePdfTemplateAnalysisId(template: PdfTemplate): number | nu
   const top = Number(template.analysisId);
   if (Number.isFinite(top) && top > 0) return top;
 
-  for (const el of template.elements) {
-    if (el.type !== "table") continue;
+  for (const el of template.elements ?? []) {
+    if (el?.type !== "table") continue;
     const n = Number(el.analysisId);
     if (Number.isFinite(n) && n > 0) return n;
   }
@@ -1230,7 +1291,7 @@ export function parsePdfTemplateFromStorageText(
           (typeof obj.name === "string" && obj.name.trim()) ||
           fallbackName ||
           "PDF shablon",
-        elements: obj.elements as PdfElement[],
+        elements: normalizePdfElements(obj.elements),
         createdAt: typeof obj.createdAt === "string" ? obj.createdAt : now,
         updatedAt: typeof obj.updatedAt === "string" ? obj.updatedAt : now,
         storageId:
@@ -1252,7 +1313,7 @@ export function parsePdfTemplateFromStorageText(
     return {
       id: createTemplateId(),
       name: fallbackName || "PDF shablon",
-      elements: parsed as PdfElement[],
+      elements: normalizePdfElements(parsed),
       createdAt: now,
       updatedAt: now,
       storageId: null,
@@ -1413,6 +1474,7 @@ export function cloneGlobalTemplateForLocalEdit(template: PdfTemplate): PdfTempl
   return {
     ...cloned,
     id: createTemplateId(),
+    elements: normalizePdfElements(cloned.elements),
     storageId: null,
     globalStorageId: null,
     createdAt: now,

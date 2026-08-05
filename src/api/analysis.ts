@@ -31,7 +31,8 @@ export type AnalysisUpdatePayload = Partial<AnalysisPayload> & {
   onlinestorage?: boolean;
 };
 
-export function analysisHasOnlineStorage(a: Analysis): boolean {
+export function analysisHasOnlineStorage(a: Analysis | null | undefined): boolean {
+  if (!a || typeof a !== "object") return false;
   const v = (a as Record<string, unknown>).onlinestorage
     ?? (a as Record<string, unknown>).onlineStorage
     ?? (a as Record<string, unknown>).online_storage;
@@ -53,6 +54,49 @@ export type AnalysesFullResponse = {
   limit: number;
 };
 
+function normalizeLaboratory(raw: unknown): AnalysisLaboratory {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = Number(o.id);
+  if (!Number.isFinite(id)) return null;
+  return {
+    id,
+    name: String(o.name ?? ""),
+    createdAt: String(o.createdAt ?? o.created_at ?? ""),
+    lab_director: o.lab_director ?? null,
+  };
+}
+
+function normalizeAnalysisRecord(raw: unknown): Analysis | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const id = Number(o.id);
+  if (!Number.isFinite(id)) return null;
+  return {
+    id,
+    name: String(o.name ?? ""),
+    shortname: String(o.shortname ?? o.shortName ?? ""),
+    price: String(o.price ?? ""),
+    createdAt: String(o.createdAt ?? o.created_at ?? ""),
+    laboratory: normalizeLaboratory(o.laboratory ?? o.lab),
+    onlinestorage: analysisHasOnlineStorage(o as unknown as Analysis),
+  };
+}
+
+function normalizeAnalysisList(raw: unknown): Analysis[] {
+  let list: unknown[] = [];
+  if (Array.isArray(raw)) {
+    list = raw;
+  } else if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const data = obj.data ?? obj.analyses ?? obj.items ?? obj.result;
+    if (Array.isArray(data)) list = data;
+  }
+  return list
+    .map(normalizeAnalysisRecord)
+    .filter((a): a is Analysis => a != null);
+}
+
 function normalizeFullResponse(
   raw: unknown,
   params: AnalysesFullParams,
@@ -61,14 +105,15 @@ function normalizeFullResponse(
   const limit = params.limit ?? 10;
 
   if (Array.isArray(raw)) {
-    return { data: raw as Analysis[], total: raw.length, page, limit };
+    const data = normalizeAnalysisList(raw);
+    return { data, total: data.length, page, limit };
   }
 
   if (raw && typeof raw === "object") {
     const obj = raw as Record<string, unknown>;
-    const data = (obj.data ?? obj.analyses ?? obj.items ?? obj.result) as
-      | Analysis[]
-      | undefined;
+    const data = normalizeAnalysisList(
+      obj.data ?? obj.analyses ?? obj.items ?? obj.result ?? [],
+    );
     const total =
       typeof obj.total === "number"
         ? obj.total
@@ -76,13 +121,11 @@ function normalizeFullResponse(
           ? obj.count
           : typeof obj.totalCount === "number"
             ? obj.totalCount
-            : Array.isArray(data)
-              ? data.length
-              : 0;
+            : data.length;
     const meta = (obj.meta ?? obj.pagination) as Record<string, unknown> | undefined;
 
     return {
-      data: Array.isArray(data) ? data : [],
+      data,
       total: typeof meta?.total === "number" ? meta.total : total,
       page: typeof obj.page === "number" ? obj.page : typeof meta?.page === "number" ? meta.page : page,
       limit: typeof obj.limit === "number" ? obj.limit : typeof meta?.limit === "number" ? meta.limit : limit,
@@ -92,11 +135,12 @@ function normalizeFullResponse(
   return { data: [], total: 0, page, limit };
 }
 
-export function getAllAnalyses() {
-  return apiRequest<Analysis[]>("/analysis/getall", {
+export async function getAllAnalyses() {
+  const raw = await apiRequest<unknown>("/analysis/getall", {
     method: "GET",
     fallbackError: "Analizlarni yuklab bo'lmadi",
   });
+  return normalizeAnalysisList(raw);
 }
 
 export async function getAnalysesFull(

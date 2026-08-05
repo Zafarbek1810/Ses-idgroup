@@ -131,11 +131,11 @@ function FillableElement({
   const isTable = element.type === "table";
 
   const textStyle: React.CSSProperties = {
-    fontWeight: element.style.bold ? 700 : 400,
-    fontStyle: element.style.italic ? "italic" : "normal",
-    textDecoration: element.style.underline ? "underline" : "none",
-    fontSize: (element.style.fontSize ?? 12) * A4_PREVIEW_SCALE,
-    textAlign: element.style.align || "left",
+    fontWeight: element.style?.bold ? 700 : 400,
+    fontStyle: element.style?.italic ? "italic" : "normal",
+    textDecoration: element.style?.underline ? "underline" : "none",
+    fontSize: (element.style?.fontSize ?? 12) * A4_PREVIEW_SCALE,
+    textAlign: element.style?.align || "left",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     color: "#0f172a",

@@ -115,7 +115,7 @@ function NewTemplateModal({
 }) {
   const initialAnalysis =
     initialAnalysisId != null && initialAnalysisId > 0
-      ? analyses.find(a => a.id === initialAnalysisId) ?? null
+      ? (Array.isArray(analyses) ? analyses : []).find(a => a.id === initialAnalysisId) ?? null
       : null;
   const [labId, setLabId] = useState<string>(
     initialAnalysis?.laboratory?.id ? String(initialAnalysis.laboratory.id) : "",
@@ -128,12 +128,14 @@ function NewTemplateModal({
   const labAnalyses = useMemo(() => {
     if (!labId) return [];
     const id = Number(labId);
-    return analyses.filter(a => a.laboratory?.id === id);
+    const list = Array.isArray(analyses) ? analyses : [];
+    return list.filter(a => a.laboratory?.id === id);
   }, [analyses, labId]);
 
   const submit = () => {
     const id = Number(analysisId);
-    const found = labAnalyses.find(a => a.id === id) ?? analyses.find(a => a.id === id);
+    const list = Array.isArray(analyses) ? analyses : [];
+    const found = labAnalyses.find(a => a.id === id) ?? list.find(a => a.id === id);
     if (!found) {
       setError("Analizni tanlang");
       return;
@@ -174,7 +176,7 @@ function NewTemplateModal({
               className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]"
             >
               <option value="">Laboratoriyani tanlang...</option>
-              {laboratories.map(l => (
+              {(Array.isArray(laboratories) ? laboratories : []).map(l => (
                 <option key={l.id} value={l.id}>{l.name}</option>
               ))}
             </select>
@@ -268,13 +270,15 @@ export function PdfTemplateSection({
   const filterLabAnalyses = useMemo(() => {
     if (!filterLabId) return [];
     const id = Number(filterLabId);
-    return analyses.filter(a => a.laboratory?.id === id);
+    const list = Array.isArray(analyses) ? analyses : [];
+    return list.filter(a => a.laboratory?.id === id);
   }, [analyses, filterLabId]);
 
   const filteredTemplates = useMemo(() => {
     if (!filterAnalysisId) return [];
     const id = Number(filterAnalysisId);
-    return templates.filter(t => resolvePdfTemplateAnalysisId(t) === id);
+    const list = Array.isArray(templates) ? templates : [];
+    return list.filter(t => resolvePdfTemplateAnalysisId(t) === id);
   }, [templates, filterAnalysisId]);
 
   const pushToast = (text: string, type: ToastMsg["type"] = "success") => {
@@ -295,9 +299,9 @@ export function PdfTemplateSection({
         getAllLaboratories(),
         fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]),
       ]);
-      setAnalyses(a);
-      setLaboratories(labs);
-      applyLoadedTemplates(remoteTemplates);
+      setAnalyses(Array.isArray(a) ? a : []);
+      setLaboratories(Array.isArray(labs) ? labs : []);
+      applyLoadedTemplates(Array.isArray(remoteTemplates) ? remoteTemplates : []);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Ma'lumot yuklanmadi", "error");
     } finally {
@@ -352,7 +356,9 @@ export function PdfTemplateSection({
     setTemplate(t => ({
       ...t,
       elements: t.elements.map(el =>
-        el.id === id ? { ...el, style: { ...el.style, ...patch } } : el,
+        el.id === id
+          ? { ...el, style: { ...(el.style ?? {}), ...patch } }
+          : el,
       ),
     }));
   };
@@ -661,7 +667,7 @@ export function PdfTemplateSection({
           className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px]"
         >
           <option value="">Laboratoriya...</option>
-          {laboratories.map(l => (
+          {(Array.isArray(laboratories) ? laboratories : []).map(l => (
             <option key={l.id} value={l.id}>{l.name}</option>
           ))}
         </select>
@@ -816,7 +822,7 @@ export function PdfTemplateSection({
                           { key: "underline", icon: Underline },
                         ] as const
                       ).map(({ key, icon: Icon }) => {
-                        const on = Boolean(selected.style[key]);
+                        const on = Boolean(selected.style?.[key]);
                         return (
                           <button
                             key={key}
@@ -840,7 +846,7 @@ export function PdfTemplateSection({
                           { align: "right" as const, icon: AlignRight },
                         ]
                       ).map(({ align, icon: Icon }) => {
-                        const on = (selected.style.align || "left") === align;
+                        const on = (selected.style?.align || "left") === align;
                         return (
                           <button
                             key={align}
@@ -865,7 +871,7 @@ export function PdfTemplateSection({
                         type="number"
                         min={8}
                         max={48}
-                        value={selected.style.fontSize ?? 12}
+                        value={selected.style?.fontSize ?? 12}
                         onChange={e =>
                           updateStyle(selected.id, { fontSize: Number(e.target.value) || 12 })
                         }
@@ -1396,10 +1402,8 @@ function FreeTableBuilder({
       : bounds
         ? { row: bounds.r1, col: bounds.c1 }
         : null;
-  const activeCell =
-    active && !grid[active.row]?.[active.col]?.covered
-      ? grid[active.row][active.col]
-      : null;
+  const activeCellRaw = active ? grid[active.row]?.[active.col] : undefined;
+  const activeCell = activeCellRaw && !activeCellRaw.covered ? activeCellRaw : null;
   const canMerge = Boolean(
     bounds && (bounds.r1 !== bounds.r2 || bounds.c1 !== bounds.c2),
   );
@@ -1457,7 +1461,7 @@ function FreeTableBuilder({
           className="w-full bg-card border border-border rounded-xl px-3 py-2 text-[12px] text-foreground focus:outline-none"
         >
           <option value="">Tanlang...</option>
-          {analyses.map(a => (
+          {(Array.isArray(analyses) ? analyses : []).map(a => (
             <option key={a.id} value={a.id}>
               {a.name} {a.laboratory?.name ? `(${a.laboratory.name})` : ""}
             </option>
@@ -1791,11 +1795,11 @@ function CanvasElement({
   };
 
   const textStyle: React.CSSProperties = {
-    fontWeight: element.style.bold ? 700 : 400,
-    fontStyle: element.style.italic ? "italic" : "normal",
-    textDecoration: element.style.underline ? "underline" : "none",
-    fontSize: (element.style.fontSize ?? 12) * A4_PREVIEW_SCALE,
-    textAlign: element.style.align || "left",
+    fontWeight: element.style?.bold ? 700 : 400,
+    fontStyle: element.style?.italic ? "italic" : "normal",
+    textDecoration: element.style?.underline ? "underline" : "none",
+    fontSize: (element.style?.fontSize ?? 12) * A4_PREVIEW_SCALE,
+    textAlign: element.style?.align || "left",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
     color: "#0f172a",

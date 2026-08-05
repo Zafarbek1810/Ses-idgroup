@@ -8,6 +8,7 @@ import { AnalysesSection } from "./management/AnalysesSection";
 import { PatternsSection } from "./management/PatternsSection";
 import { PdfTemplateSection } from "./management/PdfTemplateSection";
 import { GlobalPdfTemplateSection } from "./management/GlobalPdfTemplateSection";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { PdfTemplate } from "@/lib/pdfTemplate";
 
 type TabId = "roles" | "users" | "laboratories" | "analyses" | "patterns" | "pdf" | "globalPdf";
@@ -58,23 +59,31 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
       {activeTab === "roles" && <RolesSection primaryColor={primaryColor} />}
       {activeTab === "users" && <UsersSection primaryColor={primaryColor} />}
       {activeTab === "laboratories" && <LaboratoriesSection primaryColor={primaryColor} />}
-      {activeTab === "analyses" && <AnalysesSection primaryColor={primaryColor} />}
+      {activeTab === "analyses" && (
+        <ErrorBoundary fallbackTitle="Analizlar bo'limida xatolik">
+          <AnalysesSection primaryColor={primaryColor} />
+        </ErrorBoundary>
+      )}
       {activeTab === "patterns" && <PatternsSection primaryColor={primaryColor} />}
       {activeTab === "pdf" && (
-        <PdfTemplateSection
-          primaryColor={primaryColor}
-          importTemplate={pdfImport}
-          onImportConsumed={() => setPdfImport(null)}
-        />
+        <ErrorBoundary fallbackTitle="PDF shablon bo'limida xatolik">
+          <PdfTemplateSection
+            primaryColor={primaryColor}
+            importTemplate={pdfImport}
+            onImportConsumed={() => setPdfImport(null)}
+          />
+        </ErrorBoundary>
       )}
       {activeTab === "globalPdf" && (
-        <GlobalPdfTemplateSection
-          primaryColor={primaryColor}
-          onEditTemplate={template => {
-            setPdfImport(template);
-            setActiveTab("pdf");
-          }}
-        />
+        <ErrorBoundary fallbackTitle="Global PDF shablon bo'limida xatolik">
+          <GlobalPdfTemplateSection
+            primaryColor={primaryColor}
+            onEditTemplate={template => {
+              setPdfImport(template);
+              setActiveTab("pdf");
+            }}
+          />
+        </ErrorBoundary>
       )}
     </main>
   );

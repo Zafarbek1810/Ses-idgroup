@@ -36,12 +36,13 @@ const EMPTY_FORM: AnalysisForm = {
 
 const PER_PAGE = 10;
 
-function formatPrice(price: string) {
+function formatPrice(price: unknown) {
   const n = Number(price);
   if (Number.isFinite(n)) {
     return n.toLocaleString("uz-UZ") + " so'm";
   }
-  return price;
+  if (price == null || price === "") return "—";
+  return String(price);
 }
 
 function AnalysisFormModal({
@@ -61,7 +62,12 @@ function AnalysisFormModal({
   onSave: (data: AnalysisForm) => void;
   onClose: () => void;
 }) {
-  const [form, setForm] = useState<AnalysisForm>({ ...initial });
+  const [form, setForm] = useState<AnalysisForm>({
+    name: String(initial.name ?? ""),
+    shortname: String(initial.shortname ?? ""),
+    price: String(initial.price ?? ""),
+    laboratory_id: initial.laboratory_id,
+  });
   const [errors, setErrors] = useState<Partial<Record<keyof AnalysisForm, string>>>({});
 
   const set = <K extends keyof AnalysisForm>(k: K, v: AnalysisForm[K]) => {
@@ -71,9 +77,12 @@ function AnalysisFormModal({
 
   const validate = () => {
     const e: Partial<Record<keyof AnalysisForm, string>> = {};
-    if (!form.name.trim() || form.name.trim().length < 2) e.name = "Kamida 2 ta belgi kiriting";
-    if (!form.shortname.trim()) e.shortname = "Qisqa nom kiritilishi shart";
-    if (!form.price.trim() || Number.isNaN(Number(form.price)) || Number(form.price) < 0) {
+    const name = String(form.name ?? "").trim();
+    const shortname = String(form.shortname ?? "").trim();
+    const price = String(form.price ?? "").trim();
+    if (!name || name.length < 2) e.name = "Kamida 2 ta belgi kiriting";
+    if (!shortname) e.shortname = "Qisqa nom kiritilishi shart";
+    if (!price || Number.isNaN(Number(price)) || Number(price) < 0) {
       e.price = "To'g'ri narx kiriting";
     }
     if (form.laboratory_id === "" || form.laboratory_id == null) e.laboratory_id = "Laboratoriya tanlang";
@@ -253,9 +262,9 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
     if (form.laboratory_id === "") return;
 
     const payload: AnalysisPayload = {
-      name: form.name.trim(),
-      shortname: form.shortname.trim(),
-      price: String(form.price).trim(),
+      name: String(form.name ?? "").trim(),
+      shortname: String(form.shortname ?? "").trim(),
+      price: String(form.price ?? "").trim(),
       laboratory_id: form.laboratory_id,
     };
 
@@ -265,8 +274,8 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
         await addAnalysis(payload);
         pushToast(`${payload.name} qo'shildi`);
         setModal(null);
-        setPage(1);
-        await loadItems({ page: 1 });
+        if (page !== 1) setPage(1);
+        else await loadItems({ page: 1 });
       } else {
         await updateAnalysis(modal.item.id, payload);
         pushToast(`${payload.name} yangilandi`);
@@ -552,9 +561,9 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
         <AnalysisFormModal
           mode="edit"
           initial={{
-            name: modal.item.name,
-            shortname: modal.item.shortname,
-            price: modal.item.price,
+            name: String(modal.item.name ?? ""),
+            shortname: String(modal.item.shortname ?? ""),
+            price: String(modal.item.price ?? ""),
             laboratory_id: modal.item.laboratory?.id ?? "",
           }}
           laboratories={laboratories}

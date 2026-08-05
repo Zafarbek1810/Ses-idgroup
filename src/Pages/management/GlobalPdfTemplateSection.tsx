@@ -112,8 +112,8 @@ export function GlobalPdfTemplateSection({
           getAllLaboratories(),
           getAllAnalyses(),
         ]);
-        setLaboratories(labs);
-        setAnalyses(allAnalyses);
+        setLaboratories(Array.isArray(labs) ? labs : []);
+        setAnalyses(Array.isArray(allAnalyses) ? allAnalyses : []);
       } catch {
         /* filter selectlar bo'sh qolishi mumkin */
       }

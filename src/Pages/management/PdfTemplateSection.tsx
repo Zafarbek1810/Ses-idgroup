@@ -5,6 +5,7 @@ import {
   Bold, Italic, Underline, Trash2, Save, Plus, RefreshCw, CheckCircle,
   AlertCircle, Loader2, FileText, MousePointer2, AlignLeft, AlignCenter,
   AlignRight, GripVertical, X, Upload, Database, Minus, Combine, Globe,
+  ArrowLeft,
 } from "lucide-react";
 import { getAllAnalyses, type Analysis } from "@/api/analysis";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -229,14 +230,34 @@ function NewTemplateModal({
   );
 }
 
+export type PdfOpenForAnalysis = {
+  id: number;
+  name: string;
+  laboratoryId: number | null;
+  hasTemplate: boolean;
+};
+
 export function PdfTemplateSection({
   primaryColor,
   importTemplate = null,
   onImportConsumed,
+  openForAnalysis = null,
+  onOpenForAnalysisConsumed,
+  globalEditTemplate = null,
+  onGlobalEditConsumed,
+  onGlobalEditClose,
+  onGlobalEditSaved,
 }: {
   primaryColor: string;
   importTemplate?: PdfTemplate | null;
   onImportConsumed?: () => void;
+  openForAnalysis?: PdfOpenForAnalysis | null;
+  onOpenForAnalysisConsumed?: () => void;
+  /** Global PDF bo'limidan: shu global yozuvni joyida tahrirlash */
+  globalEditTemplate?: PdfTemplate | null;
+  onGlobalEditConsumed?: () => void;
+  onGlobalEditClose?: () => void;
+  onGlobalEditSaved?: () => void;
 }) {
   const [templates, setTemplates] = useState<PdfTemplate[]>([]);
   const [template, setTemplate] = useState<PdfTemplate>(() => emptyTemplate());
@@ -255,6 +276,7 @@ export function PdfTemplateSection({
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [pendingImport, setPendingImport] = useState<PdfTemplate | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
+  const [isGlobalEditMode, setIsGlobalEditMode] = useState(false);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [dragTool, setDragTool] = useState<DragPayload | null>(null);
   const [tableSel, setTableSel] = useState<PdfTableSelection | null>(null);
@@ -322,9 +344,75 @@ export function PdfTemplateSection({
     setTableSel(null);
     setActiveTemplateId(null);
     setEditorOpen(false);
+    setIsGlobalEditMode(false);
     onImportConsumed?.();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once per import
   }, [importTemplate]);
+
+  // Global PDF tab → joyida tahrirlash (globalStorageId saqlanadi)
+  useEffect(() => {
+    if (!globalEditTemplate) return;
+    const next = structuredClone(globalEditTemplate);
+    setTemplate(next);
+    setSelectedId(null);
+    setEditingId(null);
+    setTableSel(null);
+    setActiveTemplateId(null);
+    setPendingImport(null);
+    setIsGlobalEditMode(true);
+    setEditorOpen(true);
+    onGlobalEditConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once per open
+  }, [globalEditTemplate]);
+
+  // Analizlar → Shablon ustuni: shablon ochish yoki yangi yaratish
+  useEffect(() => {
+    if (!openForAnalysis || loadingMeta) return;
+
+    const analysisId = openForAnalysis.id;
+    const labId = openForAnalysis.laboratoryId;
+    const fromMeta = analyses.find(a => a.id === analysisId);
+    const analysis: Analysis = fromMeta ?? {
+      id: analysisId,
+      name: openForAnalysis.name,
+      shortname: "",
+      price: "",
+      createdAt: "",
+      laboratory: labId
+        ? { id: labId, name: "", createdAt: "", lab_director: null }
+        : null,
+    };
+
+    if (analysis.laboratory?.id) {
+      setFilterLabId(String(analysis.laboratory.id));
+    }
+    setFilterAnalysisId(String(analysisId));
+
+    const existing = templates.filter(
+      t => resolvePdfTemplateAnalysisId(t) === analysisId,
+    );
+
+    if (openForAnalysis.hasTemplate && existing.length > 0) {
+      const found = existing[0];
+      setTemplate(structuredClone(found));
+      setSelectedId(null);
+      setEditingId(null);
+      setTableSel(null);
+      setActiveTemplateId(found.id);
+      setEditorOpen(true);
+    } else {
+      const t = emptyTemplate({ id: analysis.id, name: analysis.name });
+      setTemplate(t);
+      setSelectedId(null);
+      setEditingId(null);
+      setTableSel(null);
+      setActiveTemplateId(null);
+      setEditorOpen(true);
+    }
+
+    onOpenForAnalysisConsumed?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- consume once after meta load
+  }, [openForAnalysis, loadingMeta]);
 
   // Scroll props into view when selection changes
   useEffect(() => {
@@ -447,6 +535,28 @@ export function PdfTemplateSection({
   };
 
   const handleSave = async () => {
+    if (isGlobalEditMode) {
+      setSavingGlobal(true);
+      try {
+        const saved = await upsertPdfTemplateGlobal(template);
+        setTemplate(saved);
+        pushToast("Global PDF shablon yangilandi");
+        onGlobalEditSaved?.();
+      } catch (err) {
+        pushToast(
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : "Globalga saqlab bo'lmadi",
+          "error",
+        );
+      } finally {
+        setSavingGlobal(false);
+      }
+      return;
+    }
+
     setSaving(true);
     try {
       const saved = await upsertPdfTemplateRemote(template);
@@ -465,6 +575,16 @@ export function PdfTemplateSection({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleCloseGlobalEdit = () => {
+    setIsGlobalEditMode(false);
+    setEditorOpen(false);
+    setSelectedId(null);
+    setEditingId(null);
+    setTableSel(null);
+    setTemplate(emptyTemplate());
+    onGlobalEditClose?.();
   };
 
   const handleSaveGlobal = async () => {
@@ -502,6 +622,7 @@ export function PdfTemplateSection({
     setEditingId(null);
     setTableSel(null);
     setActiveTemplateId(null);
+    setIsGlobalEditMode(false);
     setNewModalOpen(false);
     setEditorOpen(true);
     if (analysis.laboratory?.id) {
@@ -539,6 +660,7 @@ export function PdfTemplateSection({
     setEditingId(null);
     setTableSel(null);
     setActiveTemplateId(id);
+    setIsGlobalEditMode(false);
     setEditorOpen(true);
     const analysisId = resolvePdfTemplateAnalysisId(found);
     if (analysisId) {
@@ -631,6 +753,15 @@ export function PdfTemplateSection({
   return (
     <div className="space-y-4">
       <div className="bg-card rounded-2xl border border-border shadow-sm p-4 flex flex-wrap items-center gap-3">
+        {isGlobalEditMode && (
+          <button
+            type="button"
+            onClick={handleCloseGlobalEdit}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold bg-secondary text-foreground hover:opacity-90"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Orqaga
+          </button>
+        )}
         {editorOpen ? (
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
@@ -649,6 +780,11 @@ export function PdfTemplateSection({
                 {template.analysisName || `Analiz #${template.analysisId}`}
               </span>
             ) : null}
+            {isGlobalEditMode && (
+              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-violet-700 bg-violet-500/10">
+                <Globe className="w-3 h-3" /> Global tahrirlash
+              </span>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-2 min-w-0 flex-1">
@@ -658,60 +794,64 @@ export function PdfTemplateSection({
             </p>
           </div>
         )}
-        <select
-          value={filterLabId}
-          onChange={e => {
-            setFilterLabId(e.target.value);
-            setFilterAnalysisId("");
-          }}
-          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px]"
-        >
-          <option value="">Laboratoriya...</option>
-          {(Array.isArray(laboratories) ? laboratories : []).map(l => (
-            <option key={l.id} value={l.id}>{l.name}</option>
-          ))}
-        </select>
-        <select
-          value={filterAnalysisId}
-          disabled={!filterLabId}
-          onChange={e => setFilterAnalysisId(e.target.value)}
-          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px] disabled:opacity-60"
-        >
-          <option value="">
-            {filterLabId ? "Analiz..." : "Avval laboratoriya"}
-          </option>
-          {filterLabAnalyses.map(a => (
-            <option key={a.id} value={a.id}>{a.name}</option>
-          ))}
-        </select>
-        <select
-          value={
-            editorOpen && filteredTemplates.some(t => t.id === template.id) ? template.id : ""
-          }
-          disabled={!filterAnalysisId}
-          onChange={e => {
-            if (e.target.value) handleLoad(e.target.value);
-          }}
-          className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[220px] disabled:opacity-60"
-        >
-          <option value="">
-            {!filterAnalysisId
-              ? "Avval analiz tanlang"
-              : filteredTemplates.length === 0
-                ? "Shablon topilmadi"
-                : "Saqlangan shablonlar..."}
-          </option>
-          {filteredTemplates.map(t => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </select>
-        <button
-          type="button"
-          onClick={handleNew}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold bg-secondary text-foreground hover:opacity-90"
-        >
-          <Plus className="w-3.5 h-3.5" /> Yangi
-        </button>
+        {!isGlobalEditMode && (
+          <>
+            <select
+              value={filterLabId}
+              onChange={e => {
+                setFilterLabId(e.target.value);
+                setFilterAnalysisId("");
+              }}
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px]"
+            >
+              <option value="">Laboratoriya...</option>
+              {(Array.isArray(laboratories) ? laboratories : []).map(l => (
+                <option key={l.id} value={l.id}>{l.name}</option>
+              ))}
+            </select>
+            <select
+              value={filterAnalysisId}
+              disabled={!filterLabId}
+              onChange={e => setFilterAnalysisId(e.target.value)}
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px] disabled:opacity-60"
+            >
+              <option value="">
+                {filterLabId ? "Analiz..." : "Avval laboratoriya"}
+              </option>
+              {filterLabAnalyses.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <select
+              value={
+                editorOpen && filteredTemplates.some(t => t.id === template.id) ? template.id : ""
+              }
+              disabled={!filterAnalysisId}
+              onChange={e => {
+                if (e.target.value) handleLoad(e.target.value);
+              }}
+              className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[220px] disabled:opacity-60"
+            >
+              <option value="">
+                {!filterAnalysisId
+                  ? "Avval analiz tanlang"
+                  : filteredTemplates.length === 0
+                    ? "Shablon topilmadi"
+                    : "Saqlangan shablonlar..."}
+              </option>
+              {filteredTemplates.map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={handleNew}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold bg-secondary text-foreground hover:opacity-90"
+            >
+              <Plus className="w-3.5 h-3.5" /> Yangi
+            </button>
+          </>
+        )}
         {editorOpen && (
           <>
             <button
@@ -721,28 +861,30 @@ export function PdfTemplateSection({
               className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
               style={{ background: primaryColor }}
             >
-              {saving ? (
+              {saving || (isGlobalEditMode && savingGlobal) ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
                 <Save className="w-3.5 h-3.5" />
               )}
-              Saqlash
+              {isGlobalEditMode ? "Globalni saqlash" : "Saqlash"}
             </button>
-            <button
-              type="button"
-              onClick={() => void handleSaveGlobal()}
-              disabled={saving || savingGlobal || deleting}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold border border-border bg-secondary text-foreground hover:opacity-90 disabled:opacity-50"
-              title="Barcha tumanlar ko'ra oladigan global omborga saqlash"
-            >
-              {savingGlobal ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Globe className="w-3.5 h-3.5" />
-              )}
-              Globalga saqlash
-            </button>
-            {templates.some(t => t.id === template.id) && (
+            {!isGlobalEditMode && (
+              <button
+                type="button"
+                onClick={() => void handleSaveGlobal()}
+                disabled={saving || savingGlobal || deleting}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold border border-border bg-secondary text-foreground hover:opacity-90 disabled:opacity-50"
+                title="Barcha tumanlar ko'ra oladigan global omborga saqlash"
+              >
+                {savingGlobal ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Globe className="w-3.5 h-3.5" />
+                )}
+                Globalga saqlash
+              </button>
+            )}
+            {!isGlobalEditMode && templates.some(t => t.id === template.id) && (
               <button
                 type="button"
                 onClick={() => setDeleteConfirmId(template.id)}
@@ -755,14 +897,16 @@ export function PdfTemplateSection({
             )}
           </>
         )}
-        <button
-          type="button"
-          onClick={() => void loadMeta()}
-          className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground"
-          title="Yangilash"
-        >
-          <RefreshCw className={`w-4 h-4 ${loadingMeta ? "animate-spin" : ""}`} />
-        </button>
+        {!isGlobalEditMode && (
+          <button
+            type="button"
+            onClick={() => void loadMeta()}
+            className="p-2 rounded-xl bg-secondary text-muted-foreground hover:text-foreground"
+            title="Yangilash"
+          >
+            <RefreshCw className={`w-4 h-4 ${loadingMeta ? "animate-spin" : ""}`} />
+          </button>
+        )}
       </div>
 
       {editorOpen ? (
@@ -1269,7 +1413,7 @@ export function PdfTemplateSection({
           laboratories={laboratories}
           analyses={analyses}
           primaryColor={primaryColor}
-          title="Global shablonni saqlash"
+          title="Global shablonni o'ziga moslashtirish"
           description="Qaysi laboratoriya va analiz uchun online storage'ga saqlashni tanlang"
           confirmLabel="Tahrirlashni ochish"
           initialAnalysisId={

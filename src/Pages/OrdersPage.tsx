@@ -418,7 +418,7 @@ export function OrdersPage({ primaryColor }: { primaryColor: string }) {
                     <td className="px-4 py-3">
                       <StatusBadge status={String(order.status)} />
                     </td>
-                    <td className="px-4 py-3 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-4 py-3 text-[12px] text-muted-foreground whitespace-pre-line">
                       {order.createdAt ? formatDate(order.createdAt) : "—"}
                     </td>
                     <td className="px-4 py-3" onClick={e => e.stopPropagation()}>

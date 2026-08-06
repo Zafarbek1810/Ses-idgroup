@@ -20,7 +20,7 @@ export type NavId =
 const ROLE_NAV: Record<AppRole, readonly NavId[]> = {
   admin: ["dashboard", "companies"],
   director: ["dashboard", "management", "patients", "kassa", "orders", "results"],
-  kassir: ["patients", "kassa"],
+  kassir: ["patients", "kassa", "results"],
   lab_director: ["dashboard", "orders", "results"],
   lab_asistant: ["dashboard", "results"],
 };

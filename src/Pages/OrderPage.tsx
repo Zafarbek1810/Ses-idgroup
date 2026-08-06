@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
   FlaskConical, MessageSquare, Search, UserPlus, Printer, ClipboardList, Pencil,
+  RefreshCw,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -12,6 +13,94 @@ import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
+
+type PatientFilterForm = {
+  first_name: string;
+  last_name: string;
+  birth_day: string;
+  phone: string;
+  passport_number: string;
+};
+
+const EMPTY_PATIENT_FILTER: PatientFilterForm = {
+  first_name: "",
+  last_name: "",
+  birth_day: "",
+  phone: "",
+  passport_number: "",
+};
+
+const PHONE_PREFIX = "+998";
+
+function normalizeBirthDay(value: string): string {
+  if (!value) return "";
+  return value.slice(0, 10);
+}
+
+function formatPassportNumber(raw: string): string {
+  const cleaned = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  let letters = "";
+  let digits = "";
+
+  for (const ch of cleaned) {
+    if (letters.length < 2) {
+      if (/[A-Z]/.test(ch)) letters += ch;
+      continue;
+    }
+    if (digits.length < 7 && /\d/.test(ch)) digits += ch;
+  }
+
+  return letters + digits;
+}
+
+function formatPhoneNumber(raw: string): string {
+  let digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("998")) digits = digits.slice(3);
+  return PHONE_PREFIX + digits.slice(0, 9);
+}
+
+function filterPhoneValue(phone: string): string {
+  const formatted = formatPhoneNumber(phone || PHONE_PREFIX);
+  return formatted === PHONE_PREFIX ? "" : formatted;
+}
+
+function matchesPatientFilter(p: Patient, filter: PatientFilterForm): boolean {
+  const fn = filter.first_name.trim().toLowerCase();
+  const ln = filter.last_name.trim().toLowerCase();
+  const phone = filterPhoneValue(filter.phone).toLowerCase();
+  const passport = filter.passport_number.trim().toLowerCase();
+  const birth = filter.birth_day.trim();
+
+  if (fn && !(p.first_name ?? "").toLowerCase().includes(fn)) return false;
+  if (ln && !(p.last_name ?? "").toLowerCase().includes(ln)) return false;
+  if (phone && !(p.phone ?? "").toLowerCase().includes(phone)) return false;
+  if (passport && !(p.passport_number ?? "").toLowerCase().includes(passport)) return false;
+  if (birth && normalizeBirthDay(p.birth_day ?? "") !== birth) return false;
+  return true;
+}
+
+function buildPatientSearchQuery(filter: PatientFilterForm): string {
+  return [
+    filter.passport_number,
+    filterPhoneValue(filter.phone),
+    filter.first_name,
+    filter.last_name,
+    filter.birth_day,
+  ]
+    .map(v => v.trim())
+    .filter(Boolean)
+    .join(" ");
+}
+
+function hasPatientFilter(filter: PatientFilterForm): boolean {
+  return (
+    Boolean(filter.first_name.trim()) ||
+    Boolean(filter.last_name.trim()) ||
+    Boolean(filter.birth_day.trim()) ||
+    Boolean(filter.passport_number.trim()) ||
+    Boolean(filterPhoneValue(filter.phone))
+  );
+}
 
 function formatBirthDay(value: string | undefined): string {
   if (!value) return "—";
@@ -25,6 +114,15 @@ function sexLabel(sex: number | undefined): string {
   if (sex === 1) return "Erkak";
   if (sex === 2) return "Ayol";
   return "—";
+}
+
+function FilterField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-foreground mb-1.5">{label}</label>
+      {children}
+    </div>
+  );
 }
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" | "info" };
@@ -453,7 +551,7 @@ function ReceiptModal({
             <p className="text-sm font-bold text-foreground tracking-wide">SES LABORATORIYA</p>
             <p className="text-[11px] text-muted-foreground mt-1">To&apos;lov cheki</p>
             <p className="text-[11px] text-muted-foreground mt-0.5">{checkNo}</p>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-[11px] text-muted-foreground whitespace-pre-line">
               {formatDate(now.toISOString())}
             </p>
           </div>
@@ -570,7 +668,7 @@ export function OrderPage({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [patientSearch, setPatientSearch] = useState("");
+  const [patientFilter, setPatientFilter] = useState<PatientFilterForm>({ ...EMPTY_PATIENT_FILTER });
   const [patientMatches, setPatientMatches] = useState<Patient[]>([]);
   const [searchingPatients, setSearchingPatients] = useState(false);
   const [patientSearched, setPatientSearched] = useState(false);
@@ -668,18 +766,28 @@ export function OrderPage({
     return () => { cancelled = true; };
   }, []);
 
-  const loadPatients = async (search?: string) => {
+  const setPatientFilterField = <K extends keyof PatientFilterForm>(
+    k: K,
+    v: PatientFilterForm[K],
+  ) => {
+    setPatientFilter(f => ({ ...f, [k]: v }));
+  };
+
+  const loadPatients = async (filter: PatientFilterForm = patientFilter) => {
     setSearchingPatients(true);
     setPatientSearched(true);
     try {
-      const q = search?.trim() ?? "";
+      const search = buildPatientSearchQuery(filter);
       const res = await getPatientsFull({
         page: 1,
         limit: 50,
-        ...(q ? { search: q } : {}),
+        ...(search ? { search } : {}),
       });
-      setPatientMatches(res.data);
-      if (q && res.data.length === 0) pushToast("Bemor topilmadi", "info");
+      const found = hasPatientFilter(filter)
+        ? res.data.filter(p => matchesPatientFilter(p, filter))
+        : res.data;
+      setPatientMatches(found);
+      if (search && found.length === 0) pushToast("Bemor topilmadi", "info");
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Bemorlarni yuklab bo'lmadi", "error");
       setPatientMatches([]);
@@ -689,18 +797,24 @@ export function OrderPage({
   };
 
   const handleSearchPatients = async () => {
-    await loadPatients(patientSearch);
+    await loadPatients(patientFilter);
+  };
+
+  const clearPatientFilter = () => {
+    const empty = { ...EMPTY_PATIENT_FILTER };
+    setPatientFilter(empty);
+    void loadPatients(empty);
   };
 
   useEffect(() => {
     if (patientId != null) return;
-    void loadPatients();
+    void loadPatients(EMPTY_PATIENT_FILTER);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- initial list when opening kassa without patient
   }, [patientId]);
 
   const clearPatient = () => {
     onPatientChange(null);
-    setPatientSearch("");
+    setPatientFilter({ ...EMPTY_PATIENT_FILTER });
   };
 
   const existingKeys = useMemo(
@@ -900,41 +1014,123 @@ export function OrderPage({
 
       {patientId == null ? (
         <section className="bg-card rounded-2xl border border-border shadow-sm overflow-hidden">
-          <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-            <div
-              className="w-9 h-9 rounded-xl flex items-center justify-center"
-              style={{ background: `${primaryColor}18` }}
+          <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
+            <div className="flex items-center gap-3">
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center"
+                style={{ background: `${primaryColor}18` }}
+              >
+                <Search className="w-4 h-4" style={{ color: primaryColor }} />
+              </div>
+              <div>
+                <h3 className="text-[15px] font-semibold text-foreground">Bemorlar ro&apos;yxati</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Filter orqali bemorni toping yoki jadvaldan tanlang
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={clearPatientFilter}
+              className="text-xs font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5 px-3 py-2 rounded-lg hover:bg-secondary transition-colors"
             >
-              <Search className="w-4 h-4" style={{ color: primaryColor }} />
-            </div>
-            <div>
-              <h3 className="text-[15px] font-semibold text-foreground">Bemorlar ro&apos;yxati</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Jadvaldan bemorni tanlang yoki qidiruv orqali toping
-              </p>
-            </div>
+              <RefreshCw className="w-3.5 h-3.5" />
+              Tozalash
+            </button>
           </div>
 
-          <div className="p-5 space-y-4">
-            <div className="flex flex-wrap gap-3">
-              <div className="flex-1 min-w-[220px] flex items-center gap-2 bg-secondary rounded-xl px-3.5 py-2.5 border border-border">
-                <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+          <form
+            className="p-5 space-y-4"
+            onSubmit={e => {
+              e.preventDefault();
+              void handleSearchPatients();
+            }}
+          >
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
+              <FilterField label="Familiya">
                 <input
                   type="text"
-                  value={patientSearch}
-                  onChange={e => setPatientSearch(e.target.value)}
-                  onKeyDown={e => {
-                    if (e.key === "Enter") void handleSearchPatients();
-                  }}
-                  placeholder="Ism, familiya, telefon yoki passport..."
-                  className="flex-1 bg-transparent text-[13px] text-foreground placeholder-muted-foreground focus:outline-none"
+                  value={patientFilter.last_name}
+                  placeholder="Familya"
+                  onChange={e => setPatientFilterField("last_name", e.target.value)}
+                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
                 />
-              </div>
+              </FilterField>
+              <FilterField label="Ism">
+                <input
+                  type="text"
+                  value={patientFilter.first_name}
+                  placeholder="Ism"
+                  onChange={e => setPatientFilterField("first_name", e.target.value)}
+                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
+                />
+              </FilterField>
+              <FilterField label="Tug'ilgan kun">
+                <input
+                  type="date"
+                  value={patientFilter.birth_day}
+                  onChange={e => setPatientFilterField("birth_day", e.target.value)}
+                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
+                />
+              </FilterField>
+              <FilterField label="Telefon">
+                <input
+                  type="tel"
+                  value={patientFilter.phone || PHONE_PREFIX}
+                  placeholder="+998901234567"
+                  maxLength={13}
+                  inputMode="numeric"
+                  autoComplete="tel"
+                  onChange={e => setPatientFilterField("phone", formatPhoneNumber(e.target.value))}
+                  onFocus={e => {
+                    if (!patientFilter.phone || patientFilter.phone === PHONE_PREFIX) {
+                      setPatientFilterField("phone", PHONE_PREFIX);
+                    }
+                    requestAnimationFrame(() => {
+                      const el = e.target;
+                      if (el.selectionStart != null && el.selectionStart < PHONE_PREFIX.length) {
+                        el.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                      }
+                    });
+                  }}
+                  onKeyDown={e => {
+                    const input = e.currentTarget;
+                    const start = input.selectionStart ?? 0;
+                    const end = input.selectionEnd ?? 0;
+                    const touchingPrefix =
+                      start < PHONE_PREFIX.length ||
+                      (start === end && start <= PHONE_PREFIX.length && e.key === "Backspace");
+                    if (
+                      (e.key === "Backspace" || e.key === "Delete") &&
+                      touchingPrefix &&
+                      end <= PHONE_PREFIX.length
+                    ) {
+                      e.preventDefault();
+                      input.setSelectionRange(PHONE_PREFIX.length, PHONE_PREFIX.length);
+                    }
+                  }}
+                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
+                />
+              </FilterField>
+              <FilterField label="Passport">
+                <input
+                  type="text"
+                  value={patientFilter.passport_number}
+                  placeholder="AA1234567"
+                  maxLength={9}
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  onChange={e =>
+                    setPatientFilterField("passport_number", formatPassportNumber(e.target.value))
+                  }
+                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
+                />
+              </FilterField>
               <button
-                type="button"
-                onClick={() => void handleSearchPatients()}
+                type="submit"
                 disabled={searchingPatients}
-                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70"
+                className="inline-flex items-center justify-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-70"
                 style={{ background: primaryColor }}
               >
                 {searchingPatients ? (
@@ -945,10 +1141,10 @@ export function OrderPage({
                 Qidirish
               </button>
             </div>
-          </div>
+          </form>
 
           <div className="overflow-x-auto ses-scrollbar border-t border-border">
-            <table className="w-full min-w-[900px] text-left">
+            <table className="w-full min-w-[1000px] text-left">
               <thead>
                 <tr className="border-b border-border bg-secondary/40">
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -972,6 +1168,9 @@ export function OrderPage({
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Tuman
                   </th>
+                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Yaratilgan
+                  </th>
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground text-right">
                     Amal
                   </th>
@@ -980,14 +1179,14 @@ export function OrderPage({
               <tbody>
                 {searchingPatients ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center">
+                    <td colSpan={9} className="px-4 py-16 text-center">
                       <Loader2 className="w-7 h-7 animate-spin mx-auto" style={{ color: primaryColor }} />
                       <p className="text-sm text-muted-foreground mt-3">Yuklanmoqda...</p>
                     </td>
                   </tr>
                 ) : patientMatches.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center">
+                    <td colSpan={9} className="px-4 py-16 text-center">
                       {patientSearched ? (
                         <>
                           <UserPlus className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
@@ -1001,7 +1200,7 @@ export function OrderPage({
                           <ClipboardList className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
                           <p className="text-sm font-medium text-foreground">Bemorlar ro&apos;yxati</p>
                           <p className="text-xs text-muted-foreground mt-1">
-                            Qidiruv orqali bemorni toping
+                            Filter orqali bemorni toping
                           </p>
                         </>
                       )}
@@ -1041,6 +1240,9 @@ export function OrderPage({
                       </td>
                       <td className="px-4 py-3 text-[12px] text-muted-foreground">
                         {p.district?.name ?? "—"}
+                      </td>
+                      <td className="px-4 py-3 text-[12px] text-muted-foreground whitespace-pre-line">
+                        {p.createdAt ? formatDate(p.createdAt) : "—"}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center justify-end gap-1.5">
@@ -1141,7 +1343,7 @@ export function OrderPage({
                       <p className="text-[12px] text-muted-foreground mt-0.5">
                         Tuman: {patient.district?.name ?? "—"}
                       </p>
-                      <p className="text-[12px] text-muted-foreground mt-0.5">
+                      <p className="text-[12px] text-muted-foreground mt-0.5 whitespace-pre-line">
                         Sana:{" "}
                         {patient.createdAt ? formatDate(patient.createdAt) : "—"}
                       </p>

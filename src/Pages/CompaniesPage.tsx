@@ -242,20 +242,20 @@ function CompanyEditModal({
               <div className="space-y-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-semibold text-foreground mb-1.5">Ism</label>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">Familiya</label>
                     <input
                       type="text"
-                      value={form.username}
+                      value={form.surname}
                       disabled
                       readOnly
                       className={disabledInputCls}
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-foreground mb-1.5">Familiya</label>
+                    <label className="block text-xs font-semibold text-foreground mb-1.5">Ism</label>
                     <input
                       type="text"
-                      value={form.surname}
+                      value={form.username}
                       disabled
                       readOnly
                       className={disabledInputCls}
@@ -472,17 +472,6 @@ function CompanyCreateModal({
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-semibold text-foreground mb-1.5">Ism *</label>
-                  <input
-                    type="text"
-                    value={form.username}
-                    placeholder="Shoxrux"
-                    onChange={e => set("username", e.target.value)}
-                    className={inputCls(errors.username)}
-                  />
-                  {errors.username && <p className="text-[11px] text-red-500 mt-1">{errors.username}</p>}
-                </div>
-                <div>
                   <label className="block text-xs font-semibold text-foreground mb-1.5">Familiya *</label>
                   <input
                     type="text"
@@ -492,6 +481,17 @@ function CompanyCreateModal({
                     className={inputCls(errors.surname)}
                   />
                   {errors.surname && <p className="text-[11px] text-red-500 mt-1">{errors.surname}</p>}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-foreground mb-1.5">Ism *</label>
+                  <input
+                    type="text"
+                    value={form.username}
+                    placeholder="Shoxrux"
+                    onChange={e => set("username", e.target.value)}
+                    className={inputCls(errors.username)}
+                  />
+                  {errors.username && <p className="text-[11px] text-red-500 mt-1">{errors.username}</p>}
                 </div>
               </div>
 
@@ -846,7 +846,7 @@ export function CompaniesPage({ primaryColor }: { primaryColor: string }) {
                         {company.active ? "Faol" : "Faol emas"}
                       </span>
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {formatDate(company.createdAt)}
                     </td>
                     <td className="px-5 py-3.5">

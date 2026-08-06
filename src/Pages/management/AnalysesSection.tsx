@@ -191,13 +191,20 @@ function AnalysisFormModal({
   );
 }
 
-export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
+export function AnalysesSection({
+  primaryColor,
+  onOpenPdfTemplate,
+}: {
+  primaryColor: string;
+  onOpenPdfTemplate?: (item: Analysis) => void;
+}) {
   const [items, setItems] = useState<Analysis[]>([]);
   const [laboratories, setLaboratories] = useState<Laboratory[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
+  const [labId, setLabId] = useState<number | "">("");
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -254,6 +261,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
 
   const applySearch = () => {
     setPage(1);
+    setLabId("");
     setSearch(searchInput.trim());
   };
 
@@ -326,6 +334,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
                 onClick={() => {
                   setSearchInput("");
                   setSearch("");
+                  setLabId("");
                   setPage(1);
                 }}
                 className="text-muted-foreground hover:text-foreground"
@@ -334,6 +343,30 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
               </button>
             )}
           </div>
+
+          <select
+            value={labId === "" ? "" : String(labId)}
+            onChange={e => {
+              const id = e.target.value ? Number(e.target.value) : "";
+              setPage(1);
+              setLabId(id);
+              if (id === "") {
+                setSearchInput("");
+                setSearch("");
+                return;
+              }
+              const lab = laboratories.find(l => l.id === id);
+              const name = lab?.name?.trim() ?? "";
+              setSearchInput(name);
+              setSearch(name);
+            }}
+            className="bg-secondary border border-border rounded-xl px-3 py-2.5 text-[13px] text-foreground focus:outline-none max-w-[200px]"
+          >
+            <option value="">Barcha laboratoriyalar</option>
+            {laboratories.map(l => (
+              <option key={l.id} value={l.id}>{l.name}</option>
+            ))}
+          </select>
 
           <button
             onClick={applySearch}
@@ -371,7 +404,7 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
           <table className="w-full">
             <thead>
               <tr className="border-b border-border bg-secondary/40">
-                {["Analiz", "Qisqa nom", "Narx", "Laboratoriya", "Yaratilgan", "Shablon", ""].map((h, i) => (
+                {["Analiz", "Qisqa nom", "Narx", "Laboratoriya", "Shablon", "Yaratilgan", ""].map((h, i) => (
                   <th key={i} className="text-left text-[10px] font-bold text-muted-foreground uppercase tracking-wider px-5 py-3 whitespace-nowrap">
                     {h}
                   </th>
@@ -442,20 +475,32 @@ export function AnalysesSection({ primaryColor }: { primaryColor: string }) {
                         <span className="text-[11px] text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
-                      {formatDate(item.createdAt)}
-                    </td>
                     <td className="px-5 py-3.5">
                       {analysisHasOnlineStorage(item) ? (
-                        <span title="PDF shablon mavjud" className="inline-flex">
+                        <button
+                          type="button"
+                          onClick={() => onOpenPdfTemplate?.(item)}
+                          title="PDF shablonni ochish"
+                          className="inline-flex p-1.5 -m-1.5 rounded-lg hover:bg-secondary transition-colors"
+                        >
                           <FileText
                             className="w-4 h-4"
                             style={{ color: primaryColor }}
                           />
-                        </span>
+                        </button>
                       ) : (
-                        <span className="text-[11px] text-muted-foreground">—</span>
+                        <button
+                          type="button"
+                          onClick={() => onOpenPdfTemplate?.(item)}
+                          title="Yangi PDF shablon yaratish"
+                          className="text-[11px] text-muted-foreground hover:text-foreground px-1.5 py-0.5 -mx-1.5 rounded-lg hover:bg-secondary transition-colors whitespace-nowrap"
+                        >
+                          shabloni yo&apos;q
+                        </button>
                       )}
+                    </td>
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
+                      {formatDate(item.createdAt)}
                     </td>
                     <td className="px-5 py-3.5">
                       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">

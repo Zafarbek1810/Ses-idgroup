@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
-  ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut,
+  ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut, Printer, Eye,
 } from "lucide-react";
 import {
   getAllOrders,
@@ -31,7 +31,7 @@ import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import { normalizeRoleName } from "@/lib/roles";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
-import { downloadElementAsPdf } from "@/lib/pdfExport";
+import { downloadElementAsPdf, printElementAsPdf } from "@/lib/pdfExport";
 import {
   A4_PREVIEW_HEIGHT,
   A4_PREVIEW_WIDTH,
@@ -239,6 +239,10 @@ function seedFillFromTemplate(
 }
 
 export function ResultsPage({ primaryColor }: { primaryColor: string }) {
+  const role = normalizeRoleName(getStoredUser()?.role?.name);
+  const isKassir = role === "kassir";
+  const canEditResults = !isKassir;
+
   const [rows, setRows] = useState<OrderAnalysisRow[]>([]);
   const [resultsCache, setResultsCache] = useState<ResultRecord[]>([]);
   const [loading, setLoading] = useState(true);
@@ -251,6 +255,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const [dynamicCtx, setDynamicCtx] = useState<PdfDynamicContext | null>(null);
   const [saving, setSaving] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [opening, setOpening] = useState(false);
   const [pdfZoom, setPdfZoom] = useState(PDF_ZOOM_DEFAULT);
@@ -390,10 +395,15 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   };
 
   const updateFill = (key: string, value: string) => {
+    if (!canEditResults) return;
     setFillValues(prev => ({ ...prev, [key]: value }));
   };
 
   const handleSaveValues = async (): Promise<boolean> => {
+    if (!canEditResults) {
+      pushToast("Kassir natijani o'zgartira olmaydi", "error");
+      return false;
+    }
     if (!selected) return false;
     const user = getStoredUser();
     if (!user?.id) {
@@ -480,6 +490,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
 
   const handleDownloadPdf = async () => {
     if (!selected || !template || !hasTableReady()) return;
+    if (!canEditResults) return;
 
     setDownloading(true);
     try {
@@ -509,14 +520,42 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     }
   };
 
+  const handlePrintPdf = async () => {
+    if (!selected || !template || !hasTableReady() || printing) return;
+
+    setPrinting(true);
+    try {
+      // Kassir already views with margins; others briefly switch to export layout
+      if (canEditResults) {
+        flushSync(() => setExporting(true));
+        await new Promise(r => setTimeout(r, 80));
+      }
+
+      const el = pdfRef.current;
+      if (!el) {
+        pushToast("Chop etish uchun PDF tayyor emas", "error");
+        return;
+      }
+
+      await printElementAsPdf(el);
+      pushToast("Chop etish oynasi ochildi");
+    } catch (err) {
+      pushToast(err instanceof Error ? err.message : "Chop etib bo'lmadi", "error");
+    } finally {
+      if (canEditResults) setExporting(false);
+      setPrinting(false);
+    }
+  };
+
   const hasTableReady = () => Boolean(template?.elements.some(el => el.type === "table"));
 
   if (selected) {
     const hasTable = Boolean(template?.elements.some(el => el.type === "table"));
     const tableEl = template?.elements.find(el => el.type === "table");
     const grid = normalizeTableData(tableEl?.tableData);
+    const pdfReadOnly = exporting || !canEditResults;
     const previewPageHeight = template
-      ? getPdfPreviewHeight(template, exporting)
+      ? getPdfPreviewHeight(template, pdfReadOnly)
       : A4_PREVIEW_HEIGHT;
 
     return (
@@ -539,57 +578,86 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
               {selected.resultId ? ` · Result #${selected.resultId}` : ""}
             </p>
           </div>
-          <label className="flex items-center gap-2 min-w-[200px] max-w-xs">
-            <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
-              Shablon
-            </span>
-            <select
-              value={template?.id ?? ""}
-              disabled={opening || availableTemplates.length === 0}
-              onChange={e => handleTemplateChange(e.target.value)}
-              className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[12px] font-medium text-foreground focus:outline-none focus:border-[var(--primary)] disabled:opacity-50"
-            >
-              {availableTemplates.length === 0 ? (
-                <option value="">Shablon yo&apos;q</option>
-              ) : (
-                availableTemplates.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
+          {canEditResults && (
+            <label className="flex items-center gap-2 min-w-[200px] max-w-xs">
+              <span className="text-[11px] font-semibold text-muted-foreground whitespace-nowrap">
+                Shablon
+              </span>
+              <select
+                value={template?.id ?? ""}
+                disabled={opening || availableTemplates.length === 0}
+                onChange={e => handleTemplateChange(e.target.value)}
+                className="w-full bg-secondary border border-border rounded-xl px-3 py-2 text-[12px] font-medium text-foreground focus:outline-none focus:border-[var(--primary)] disabled:opacity-50"
+              >
+                {availableTemplates.length === 0 ? (
+                  <option value="">Shablon yo&apos;q</option>
+                ) : (
+                  availableTemplates.map(t => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          )}
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-secondary text-[11px] text-muted-foreground">
-            <Lock className="w-3 h-3" /> Faqat jadval inputlari
+            {canEditResults ? (
+              <>
+                <Lock className="w-3 h-3" /> Faqat jadval inputlari
+              </>
+            ) : (
+              <>
+                <Eye className="w-3 h-3" /> Faqat ko&apos;rish
+              </>
+            )}
           </div>
-          <button
-            type="button"
-            disabled={saving || downloading || !hasTable}
-            onClick={() => void handleSaveValues()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
-            style={{ background: primaryColor }}
-          >
-            {saving && !downloading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Save className="w-3.5 h-3.5" />
-            )}
-            {selected.resultId ? "Yangilash" : "Saqlash"}
-          </button>
-          <button
-            type="button"
-            disabled={saving || downloading || !hasTable || opening}
-            onClick={() => void handleDownloadPdf()}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-secondary text-[12px] font-semibold text-foreground border border-border hover:opacity-90 disabled:opacity-50"
-          >
-            {downloading ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            ) : (
-              <Download className="w-3.5 h-3.5" />
-            )}
-            Yuklab olish
-          </button>
+          {canEditResults ? (
+            <>
+              <button
+                type="button"
+                disabled={saving || downloading || printing || !hasTable}
+                onClick={() => void handleSaveValues()}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
+                style={{ background: primaryColor }}
+              >
+                {saving && !downloading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Save className="w-3.5 h-3.5" />
+                )}
+                {selected.resultId ? "Yangilash" : "Saqlash"}
+              </button>
+              <button
+                type="button"
+                disabled={saving || downloading || printing || !hasTable || opening}
+                onClick={() => void handleDownloadPdf()}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-secondary text-[12px] font-semibold text-foreground border border-border hover:opacity-90 disabled:opacity-50"
+              >
+                {downloading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5" />
+                )}
+                Yuklab olish
+              </button>
+            </>
+          ) : (
+            <button
+              type="button"
+              disabled={printing || !hasTable || opening}
+              onClick={() => void handlePrintPdf()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white disabled:opacity-50"
+              style={{ background: primaryColor }}
+            >
+              {printing ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Printer className="w-3.5 h-3.5" />
+              )}
+              Chop etish
+            </button>
+          )}
         </div>
 
         {opening ? (
@@ -677,8 +745,8 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                     template={template}
                     fillValues={fillValues}
                     dynamicCtx={dynamicCtx}
-                    onFillChange={updateFill}
-                    readOnly={exporting}
+                    onFillChange={canEditResults ? updateFill : undefined}
+                    readOnly={pdfReadOnly}
                   />
                 </div>
               </div>
@@ -721,7 +789,9 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           <div>
             <h2 className="text-[14px] font-semibold text-foreground">Natijalar</h2>
             <p className="text-[11px] text-muted-foreground">
-              Buyurtmadagi analizlar — PDF shablon orqali natija kiritish
+              {isKassir
+                ? "Buyurtmadagi analizlar — PDF natijani ko'rish va chop etish"
+                : "Buyurtmadagi analizlar — PDF shablon orqali natija kiritish"}
             </p>
           </div>
         </div>
@@ -776,7 +846,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                         </span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-[12px] text-muted-foreground">
+                    <td className="px-4 py-3 text-[12px] text-muted-foreground whitespace-pre-line">
                       {r.orderCreatedAt ? formatDate(r.orderCreatedAt) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">

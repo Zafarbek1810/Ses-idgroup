@@ -317,7 +317,7 @@ export function RolesSection({ primaryColor }: { primaryColor: string }) {
                     <td className="px-5 py-3.5 text-[12px] text-foreground">
                       {Array.isArray(role.user) ? role.user.length : 0}
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {formatDate(role.createdAt)}
                     </td>
                     <td className="px-5 py-3.5">

@@ -666,7 +666,7 @@ export function LaboratoriesSection({ primaryColor }: { primaryColor: string }) 
                         {lab.lab_assistants?.length ?? 0} ta
                       </button>
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {formatDate(lab.createdAt)}
                     </td>
                     <td className="px-5 py-3.5">

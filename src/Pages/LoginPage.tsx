@@ -2,7 +2,7 @@ import * as React from "react";
 import { useState } from "react";
 import {
   Shield, Eye, EyeOff, Check, Globe, Building2, Activity,
-  CheckCircle, Phone, ExternalLink, AlertCircle,
+  CheckCircle, ExternalLink, AlertCircle,
 } from "lucide-react";
 import {
   login as loginApi,
@@ -41,11 +41,30 @@ const PARTICLES = Array.from({ length: 28 }, (_, i) => ({
 }));
 
 const QUICK_LINKS = [
-  { icon: Globe, label: "Rasmiy veb-sayt", desc: "ses.gov.uz" },
-  { icon: Building2, label: "Vazirlar Mahkamasi", desc: "gov.uz" },
-  { icon: Activity, label: "Sog'liqni saqlash vazirligi", desc: "sog.uz" },
-  { icon: CheckCircle, label: "Davlat xizmatlari", desc: "my.gov.uz" },
-  { icon: Phone, label: "Aloqa markazi", desc: "1278" },
+  {
+    icon: Globe,
+    label: "Malaka oshirish",
+    desc: "study.sanepid.uz",
+    url: "https://study.sanepid.uz",
+  },
+  {
+    icon: Activity,
+    label: "Raqamli laboratoriya tizimi",
+    desc: "labaratoriya.tris.uz",
+    url: "https://labaratoriya.tris.uz",
+  },
+  {
+    icon: Building2,
+    label: "YKEM — epidemiologik monitoring",
+    desc: "ykem.sanepid.uz",
+    url: "https://ykem.sanepid.uz",
+  },
+  {
+    icon: CheckCircle,
+    label: "Gepatit axborot tizimi",
+    desc: "gepatit.sanepid.uz",
+    url: "https://gepatit.sanepid.uz",
+  },
 ];
 
 export const LoginPage = ({ onLogin }: { onLogin: (user: AuthUser) => void }) => {
@@ -252,7 +271,9 @@ export const LoginPage = ({ onLogin }: { onLogin: (user: AuthUser) => void }) =>
               {QUICK_LINKS.map((link, i) => (
                 <a
                   key={i}
-                  href="#"
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-slate-50 border border-slate-100 hover:border-sky-100 transition-all group"
                 >
                   <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center shrink-0 group-hover:bg-sky-100 transition-colors">

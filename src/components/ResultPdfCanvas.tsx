@@ -151,7 +151,10 @@ function FillableElement({
         left: element.x * A4_PREVIEW_SCALE,
         top: element.y * A4_PREVIEW_SCALE,
         width: element.width * A4_PREVIEW_SCALE,
-        minHeight: element.height * A4_PREVIEW_SCALE,
+        // Images must keep the exact template box size (minHeight lets them grow).
+        ...(element.type === "image"
+          ? { height: element.height * A4_PREVIEW_SCALE, overflow: "hidden" }
+          : { minHeight: element.height * A4_PREVIEW_SCALE }),
         zIndex: isTable ? 20 : 1,
         pointerEvents: isTable && !readOnly ? "auto" : "none",
       }}
@@ -161,7 +164,13 @@ function FillableElement({
           <img
             src={element.imageSrc}
             alt=""
-            className="w-full h-full object-contain pointer-events-none select-none"
+            className="pointer-events-none select-none"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "contain",
+              display: "block",
+            }}
             draggable={false}
             crossOrigin="anonymous"
           />

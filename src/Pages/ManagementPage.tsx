@@ -10,6 +10,9 @@ import { PdfTemplateSection } from "./management/PdfTemplateSection";
 import { GlobalPdfTemplateSection } from "./management/GlobalPdfTemplateSection";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import type { PdfTemplate } from "@/lib/pdfTemplate";
+import type { Analysis } from "@/api/analysis";
+import { analysisHasOnlineStorage } from "@/api/analysis";
+import type { PdfOpenForAnalysis } from "./management/PdfTemplateSection";
 
 type TabId = "roles" | "users" | "laboratories" | "analyses" | "patterns" | "pdf" | "globalPdf";
 
@@ -26,6 +29,17 @@ const TABS: { id: TabId; label: string; icon: React.ElementType }[] = [
 export function ManagementPage({ primaryColor }: { primaryColor: string }) {
   const [activeTab, setActiveTab] = useState<TabId>("roles");
   const [pdfImport, setPdfImport] = useState<PdfTemplate | null>(null);
+  const [pdfOpenForAnalysis, setPdfOpenForAnalysis] = useState<PdfOpenForAnalysis | null>(null);
+
+  const openPdfForAnalysis = (item: Analysis) => {
+    setPdfOpenForAnalysis({
+      id: item.id,
+      name: item.name,
+      laboratoryId: item.laboratory?.id ?? null,
+      hasTemplate: analysisHasOnlineStorage(item),
+    });
+    setActiveTab("pdf");
+  };
 
   return (
     <main className="flex-1 overflow-y-auto p-6 space-y-5 ses-scrollbar">
@@ -61,7 +75,10 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
       {activeTab === "laboratories" && <LaboratoriesSection primaryColor={primaryColor} />}
       {activeTab === "analyses" && (
         <ErrorBoundary fallbackTitle="Analizlar bo'limida xatolik">
-          <AnalysesSection primaryColor={primaryColor} />
+          <AnalysesSection
+            primaryColor={primaryColor}
+            onOpenPdfTemplate={openPdfForAnalysis}
+          />
         </ErrorBoundary>
       )}
       {activeTab === "patterns" && <PatternsSection primaryColor={primaryColor} />}
@@ -71,6 +88,8 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
             primaryColor={primaryColor}
             importTemplate={pdfImport}
             onImportConsumed={() => setPdfImport(null)}
+            openForAnalysis={pdfOpenForAnalysis}
+            onOpenForAnalysisConsumed={() => setPdfOpenForAnalysis(null)}
           />
         </ErrorBoundary>
       )}
@@ -78,7 +97,7 @@ export function ManagementPage({ primaryColor }: { primaryColor: string }) {
         <ErrorBoundary fallbackTitle="Global PDF shablon bo'limida xatolik">
           <GlobalPdfTemplateSection
             primaryColor={primaryColor}
-            onEditTemplate={template => {
+            onAdaptForLocal={template => {
               setPdfImport(template);
               setActiveTab("pdf");
             }}

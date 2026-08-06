@@ -172,7 +172,7 @@ function InfoRow({
       </div>
       <div className="min-w-0">
         <p className="text-[11px] text-muted-foreground font-medium">{label}</p>
-        <p className="text-sm text-foreground font-medium mt-0.5 break-words">{value}</p>
+        <p className="text-sm text-foreground font-medium mt-0.5 break-words whitespace-pre-line">{value}</p>
       </div>
     </div>
   );

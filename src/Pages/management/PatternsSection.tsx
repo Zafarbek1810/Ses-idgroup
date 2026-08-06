@@ -770,7 +770,7 @@ export function PatternsSection({ primaryColor }: { primaryColor: string }) {
                           {item.have_or_not ? "Ha" : "Yo'q"}
                         </span>
                       </td>
-                      <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                      <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                         {item.createdAt ? formatDate(item.createdAt) : "—"}
                       </td>
                       <td className="px-5 py-3.5">

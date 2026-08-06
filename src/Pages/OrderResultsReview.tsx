@@ -383,7 +383,7 @@ export function OrderResultsReview({
             {order
               ? `${patientName(order.patient, order.name)} · Tel: ${order.patient?.phone || "—"}`
               : "Yuklanmoqda..."}
-            {order?.createdAt ? ` · ${formatDate(order.createdAt)}` : ""}
+            {order?.createdAt ? ` · ${formatDate(order.createdAt).replace("\n", " ")}` : ""}
           </p>
         </div>
         {order && (

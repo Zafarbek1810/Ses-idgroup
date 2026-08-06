@@ -512,21 +512,21 @@ export function PatientsPage({
           }}
         >
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3 items-end">
-            <Field label="Ism">
-              <input
-                type="text"
-                value={filter.first_name}
-                placeholder="Ism"
-                onChange={e => setFilterField("first_name", e.target.value)}
-                className={inputCls()}
-              />
-            </Field>
             <Field label="Familiya">
               <input
                 type="text"
                 value={filter.last_name}
                 placeholder="Familya"
                 onChange={e => setFilterField("last_name", e.target.value)}
+                className={inputCls()}
+              />
+            </Field>
+            <Field label="Ism">
+              <input
+                type="text"
+                value={filter.first_name}
+                placeholder="Ism"
+                onChange={e => setFilterField("first_name", e.target.value)}
                 className={inputCls()}
               />
             </Field>
@@ -694,15 +694,6 @@ export function PatientsPage({
 
         <div className="p-5 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            <Field label="Ism *" error={errors.first_name}>
-              <input
-                type="text"
-                value={form.first_name}
-                placeholder="Ism"
-                onChange={e => setFormField("first_name", e.target.value)}
-                className={inputCls(errors.first_name)}
-              />
-            </Field>
             <Field label="Familiya *" error={errors.last_name}>
               <input
                 type="text"
@@ -710,6 +701,15 @@ export function PatientsPage({
                 placeholder="Familya"
                 onChange={e => setFormField("last_name", e.target.value)}
                 className={inputCls(errors.last_name)}
+              />
+            </Field>
+            <Field label="Ism *" error={errors.first_name}>
+              <input
+                type="text"
+                value={form.first_name}
+                placeholder="Ism"
+                onChange={e => setFormField("first_name", e.target.value)}
+                className={inputCls(errors.first_name)}
               />
             </Field>
             <Field label="Tug'ilgan kun *" error={errors.birth_day}>

@@ -112,17 +112,6 @@ function UserFormModal({
         <div className="overflow-y-auto ses-scrollbar p-6 space-y-4">
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-semibold text-foreground mb-1.5">Ism *</label>
-              <input
-                type="text"
-                value={form.username}
-                placeholder="admin"
-                onChange={e => set("username", e.target.value)}
-                className={inputCls(errors.username)}
-              />
-              {errors.username && <p className="text-[11px] text-red-500 mt-1">{errors.username}</p>}
-            </div>
-            <div>
               <label className="block text-xs font-semibold text-foreground mb-1.5">Familiya *</label>
               <input
                 type="text"
@@ -132,6 +121,17 @@ function UserFormModal({
                 className={inputCls(errors.surname)}
               />
               {errors.surname && <p className="text-[11px] text-red-500 mt-1">{errors.surname}</p>}
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-foreground mb-1.5">Ism *</label>
+              <input
+                type="text"
+                value={form.username}
+                placeholder="admin"
+                onChange={e => set("username", e.target.value)}
+                className={inputCls(errors.username)}
+              />
+              {errors.username && <p className="text-[11px] text-red-500 mt-1">{errors.username}</p>}
             </div>
           </div>
 
@@ -481,7 +481,7 @@ export function UsersSection({ primaryColor }: { primaryColor: string }) {
                         <span className="text-[11px] text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {formatDate(user.createdAt)}
                     </td>
                     <td className="px-5 py-3.5">

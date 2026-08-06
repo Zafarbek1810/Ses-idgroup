@@ -16,6 +16,7 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Eye,
+  Copy,
 } from "lucide-react";
 import {
   deleteGlobalStorage,
@@ -33,6 +34,7 @@ import {
   globalStorageRecordToPdfTemplate,
   type PdfTemplate,
 } from "@/lib/pdfTemplate";
+import { PdfTemplateSection } from "./PdfTemplateSection";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
 
@@ -40,10 +42,11 @@ const PER_PAGE = 10;
 
 export function GlobalPdfTemplateSection({
   primaryColor,
-  onEditTemplate,
+  onAdaptForLocal,
 }: {
   primaryColor: string;
-  onEditTemplate: (template: PdfTemplate) => void;
+  /** Eski logika: clone qilib PDF shablon bo'limida online storage'ga saqlash */
+  onAdaptForLocal: (template: PdfTemplate) => void;
 }) {
   const [items, setItems] = useState<GlobalStorage[]>([]);
   const [total, setTotal] = useState(0);
@@ -58,6 +61,7 @@ export function GlobalPdfTemplateSection({
   const [error, setError] = useState<string | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [viewing, setViewing] = useState<PdfTemplate | null>(null);
+  const [editing, setEditing] = useState<PdfTemplate | null>(null);
   const [loadingView, setLoadingView] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<GlobalStorage | null>(null);
@@ -158,16 +162,21 @@ export function GlobalPdfTemplateSection({
     void load({ page: 1, search: nextSearch, analysis_id: next });
   };
 
+  const fetchTemplate = async (item: GlobalStorage): Promise<PdfTemplate | null> => {
+    const full = await getGlobalStorageById(item.id);
+    const tpl = globalStorageRecordToPdfTemplate(full);
+    if (!tpl) {
+      pushToast("Shablon ma'lumotini o'qib bo'lmadi", "error");
+      return null;
+    }
+    return tpl;
+  };
+
   const openView = async (item: GlobalStorage) => {
     setLoadingView(true);
     try {
-      const full = await getGlobalStorageById(item.id);
-      const tpl = globalStorageRecordToPdfTemplate(full);
-      if (!tpl) {
-        pushToast("Shablon ma'lumotini o'qib bo'lmadi", "error");
-        return;
-      }
-      setViewing(tpl);
+      const tpl = await fetchTemplate(item);
+      if (tpl) setViewing(tpl);
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Yuklab bo'lmadi", "error");
     } finally {
@@ -175,9 +184,43 @@ export function GlobalPdfTemplateSection({
     }
   };
 
-  const handleEdit = () => {
-    if (!viewing) return;
-    onEditTemplate(cloneGlobalTemplateForLocalEdit(viewing));
+  /** Joyida global tahrirlash — globalStorageId saqlanadi */
+  const openEdit = async (item?: GlobalStorage) => {
+    setLoadingView(true);
+    try {
+      let tpl: PdfTemplate | null = null;
+      if (item) {
+        tpl = await fetchTemplate(item);
+      } else if (viewing) {
+        tpl = structuredClone(viewing);
+      }
+      if (!tpl) return;
+      setViewing(null);
+      setEditing(tpl);
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Yuklab bo'lmadi", "error");
+    } finally {
+      setLoadingView(false);
+    }
+  };
+
+  /** Eski logika: clone → PDF shablon → online storage */
+  const openAdaptForLocal = async (item?: GlobalStorage) => {
+    setLoadingView(true);
+    try {
+      let tpl: PdfTemplate | null = null;
+      if (item) {
+        tpl = await fetchTemplate(item);
+      } else if (viewing) {
+        tpl = structuredClone(viewing);
+      }
+      if (!tpl) return;
+      onAdaptForLocal(cloneGlobalTemplateForLocalEdit(tpl));
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Yuklab bo'lmadi", "error");
+    } finally {
+      setLoadingView(false);
+    }
   };
 
   const handleDelete = async () => {
@@ -187,6 +230,7 @@ export function GlobalPdfTemplateSection({
     try {
       await deleteGlobalStorage(item.id);
       if (viewing?.globalStorageId === item.id) setViewing(null);
+      if (editing?.globalStorageId === item.id) setEditing(null);
       setDeleteTarget(null);
       pushToast("Global shablon o'chirildi");
       const nextTotal = Math.max(0, total - 1);
@@ -199,6 +243,25 @@ export function GlobalPdfTemplateSection({
       setDeletingId(null);
     }
   };
+
+  if (editing) {
+    return (
+      <PdfTemplateSection
+        primaryColor={primaryColor}
+        globalEditTemplate={editing}
+        onGlobalEditConsumed={() => {
+          /* editor ichiga o'tkazildi; parentda editing saqlanadi Orqaga uchun */
+        }}
+        onGlobalEditClose={() => {
+          setEditing(null);
+          void load();
+        }}
+        onGlobalEditSaved={() => {
+          void load();
+        }}
+      />
+    );
+  }
 
   if (viewing) {
     return (
@@ -227,19 +290,27 @@ export function GlobalPdfTemplateSection({
           </div>
           <button
             type="button"
-            onClick={handleEdit}
+            onClick={() => void openEdit()}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold text-white"
             style={{ background: primaryColor }}
           >
             <Edit3 className="w-3.5 h-3.5" /> Tahrirlash
           </button>
+          <button
+            type="button"
+            onClick={() => void openAdaptForLocal()}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[12px] font-semibold border border-border bg-secondary text-foreground hover:opacity-90"
+            title="O'z online storage'ga nusxa qilib PDF shablon bo'limida tahrirlash"
+          >
+            <Copy className="w-3.5 h-3.5" /> O&apos;ziga moslashtirish
+          </button>
         </div>
 
         <div className="bg-card rounded-2xl border border-border shadow-sm p-4 overflow-auto">
           <p className="text-[12px] text-muted-foreground mb-3">
-            Ko&apos;rib chiqish — o&apos;ziga moslashtirish uchun{" "}
-            <strong>Tahrirlash</strong> orqali PDF shablon bo&apos;limiga o&apos;ting va
-            o&apos;z online storage&apos;ga saqlang.
+            <strong>Tahrirlash</strong> — shu global shablonni shu yerda yangilaydi.{" "}
+            <strong>O&apos;ziga moslashtirish</strong> — PDF shablon bo&apos;limiga nusxa ochib,
+            o&apos;z online storage&apos;ga saqlash uchun.
           </p>
           <div className="flex justify-center bg-secondary/40 rounded-xl p-4 overflow-auto">
             <ResultPdfCanvas
@@ -281,7 +352,7 @@ export function GlobalPdfTemplateSection({
             <div>
               <h3 className="text-[14px] font-semibold text-foreground">Global PDF shablonlar</h3>
               <p className="text-[11px] text-muted-foreground">
-                Barcha tumanlar ulashgan shablonlar — ko&apos;rib, o&apos;zingizga moslashtiring
+                Barcha tumanlar ulashgan shablonlar — joyida tahrirlang yoki o&apos;zingizga moslashtiring
               </p>
             </div>
           </div>
@@ -435,7 +506,7 @@ export function GlobalPdfTemplateSection({
                         <span className="text-[11px] text-muted-foreground">—</span>
                       )}
                     </td>
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {item.updatedAt || item.createdAt
                         ? formatDate(item.updatedAt || item.createdAt || "")
                         : "—"}
@@ -452,31 +523,19 @@ export function GlobalPdfTemplateSection({
                         </button>
                         <button
                           type="button"
-                          onClick={() => {
-                            void (async () => {
-                              setLoadingView(true);
-                              try {
-                                const full = await getGlobalStorageById(item.id);
-                                const tpl = globalStorageRecordToPdfTemplate(full);
-                                if (!tpl) {
-                                  pushToast("Shablon ma'lumotini o'qib bo'lmadi", "error");
-                                  return;
-                                }
-                                onEditTemplate(cloneGlobalTemplateForLocalEdit(tpl));
-                              } catch (err) {
-                                pushToast(
-                                  err instanceof ApiError ? err.message : "Yuklab bo'lmadi",
-                                  "error",
-                                );
-                              } finally {
-                                setLoadingView(false);
-                              }
-                            })();
-                          }}
+                          onClick={() => void openEdit(item)}
                           className="p-1.5 rounded-lg hover:bg-violet-50 hover:text-violet-600 text-muted-foreground transition-colors"
-                          title="Tahrirlash"
+                          title="Global shablonni tahrirlash"
                         >
                           <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void openAdaptForLocal(item)}
+                          className="p-1.5 rounded-lg hover:bg-sky-50 hover:text-sky-600 text-muted-foreground transition-colors"
+                          title="O'ziga moslashtirish (online storage)"
+                        >
+                          <Copy className="w-3.5 h-3.5" />
                         </button>
                         <button
                           type="button"

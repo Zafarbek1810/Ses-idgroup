@@ -298,7 +298,7 @@ const EmployeeViewModal = ({ emp, primaryColor, onEdit, onClose }: {
               </div>
               <div>
                 <div className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wider">{row.label}</div>
-                <div className="text-[13px] text-foreground font-medium mt-0.5 leading-tight break-all">{row.value}</div>
+                <div className="text-[13px] text-foreground font-medium mt-0.5 leading-tight break-all whitespace-pre-line">{row.value}</div>
               </div>
             </div>
           ))}
@@ -645,7 +645,7 @@ export const EmployeesPage = ({ primaryColor }: { primaryColor: string }) => {
                     </td>
 
                     {/* Join date */}
-                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-nowrap">
+                    <td className="px-5 py-3.5 text-[12px] text-muted-foreground whitespace-pre-line">
                       {formatDate(emp.joinDate)}
                     </td>
 

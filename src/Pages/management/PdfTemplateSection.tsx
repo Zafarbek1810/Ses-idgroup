@@ -319,12 +319,21 @@ export function PdfTemplateSection({
       const [a, labs, remoteTemplates] = await Promise.all([
         getAllAnalyses(),
         getAllLaboratories(),
-        fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]),
+        fetchPdfTemplatesFromApi().catch(err => {
+          console.warn("[PDF] onlinestorage/getall yuklanmadi:", err);
+          return loadPdfTemplates();
+        }),
       ]);
       setAnalyses(Array.isArray(a) ? a : []);
       setLaboratories(Array.isArray(labs) ? labs : []);
-      applyLoadedTemplates(Array.isArray(remoteTemplates) ? remoteTemplates : []);
+      const list = Array.isArray(remoteTemplates) ? remoteTemplates : loadPdfTemplates();
+      applyLoadedTemplates(list);
+      if (list.length === 0) {
+        pushToast("PDF shablonlar topilmadi (onlinestorage)", "error");
+      }
     } catch (err) {
+      // Analiz/lab xato bo'lsa ham sessiondagi shablonlarni ko'rsatamiz
+      applyLoadedTemplates(loadPdfTemplates());
       pushToast(err instanceof ApiError ? err.message : "Ma'lumot yuklanmadi", "error");
     } finally {
       setLoadingMeta(false);
@@ -812,7 +821,30 @@ export function PdfTemplateSection({
             <select
               value={filterAnalysisId}
               disabled={!filterLabId}
-              onChange={e => setFilterAnalysisId(e.target.value)}
+              onChange={e => {
+                const nextId = e.target.value;
+                setFilterAnalysisId(nextId);
+                if (!nextId) {
+                  setEditorOpen(false);
+                  return;
+                }
+                const analysisId = Number(nextId);
+                const match = (Array.isArray(templates) ? templates : []).filter(
+                  t => resolvePdfTemplateAnalysisId(t) === analysisId,
+                );
+                if (match.length === 0) {
+                  setEditorOpen(false);
+                  return;
+                }
+                const found = match[0];
+                setTemplate(structuredClone(found));
+                setSelectedId(null);
+                setEditingId(null);
+                setTableSel(null);
+                setActiveTemplateId(found.id);
+                setIsGlobalEditMode(false);
+                setEditorOpen(true);
+              }}
               className="bg-secondary border border-border rounded-xl px-3 py-2 text-[13px] text-foreground focus:outline-none max-w-[200px] disabled:opacity-60"
             >
               <option value="">

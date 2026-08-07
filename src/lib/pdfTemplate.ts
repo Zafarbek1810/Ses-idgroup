@@ -3,6 +3,7 @@ import {
   deleteOnlineStorage,
   extractOnlineStorageId,
   getAllOnlineStorages,
+  resolveOnlineStorageAnalysisId,
   updateOnlineStorage,
   type OnlineStorage,
 } from "@/api/onlineStorage";
@@ -11,6 +12,8 @@ import {
   deleteGlobalStorage,
   extractGlobalStorageId,
   getAllGlobalStorages,
+  resolveGlobalStorageAnalysisId,
+  resolveGlobalStorageCompanyId,
   updateGlobalStorage,
   type GlobalStorage,
 } from "@/api/globalStorage";
@@ -1189,7 +1192,25 @@ export function loadPdfTemplates(): PdfTemplate[] {
 }
 
 export function savePdfTemplates(templates: PdfTemplate[]) {
-  localStorage.setItem(PDF_TEMPLATE_STORAGE_KEY, JSON.stringify(templates));
+  try {
+    // Cache faqat metadata + layout; katta base64 rasmlar quota ni to'ldiradi
+    const slim = templates.map(t => ({
+      ...t,
+      elements: (t.elements ?? []).map(el => {
+        if (el.type !== "image") return el;
+        const src = el.imageSrc ?? "";
+        if (src.length <= 8_000) return el;
+        return { ...el, imageSrc: undefined };
+      }),
+    }));
+    localStorage.setItem(PDF_TEMPLATE_STORAGE_KEY, JSON.stringify(slim));
+  } catch {
+    try {
+      localStorage.removeItem(PDF_TEMPLATE_STORAGE_KEY);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 /** Logout / login: company shablonlarini local cache dan tozalash */
@@ -1260,31 +1281,48 @@ export function resolvePdfTemplateAnalysisId(template: PdfTemplate): number | nu
   return null;
 }
 
-export function pdfTemplateToStoragePayload(template: PdfTemplate): { elements: PdfElement[] } {
-  return { elements: template.elements };
+export function pdfTemplateToStoragePayload(template: PdfTemplate): {
+  elements: PdfElement[];
+  analysisId?: number;
+  analysisName?: string;
+} {
+  const analysisId = resolvePdfTemplateAnalysisId(template);
+  return {
+    elements: template.elements,
+    ...(analysisId != null
+      ? { analysisId, analysisName: template.analysisName?.trim() || "" }
+      : {}),
+  };
+}
+
+function coerceParsedStorageText(text: unknown): unknown {
+  let parsed: unknown = text;
+  // API may return JSON string (sometimes double-encoded)
+  for (let i = 0; i < 2; i++) {
+    if (typeof parsed !== "string") break;
+    try {
+      parsed = JSON.parse(parsed);
+    } catch {
+      return null;
+    }
+  }
+  return parsed;
 }
 
 export function parsePdfTemplateFromStorageText(
   text: unknown,
   fallbackName: string,
 ): PdfTemplate | null {
-  let parsed: unknown = text;
-  if (typeof text === "string") {
-    try {
-      parsed = JSON.parse(text);
-    } catch {
-      return null;
-    }
-  }
+  const parsed = coerceParsedStorageText(text);
   if (parsed == null) return null;
 
   const now = new Date().toISOString();
 
-  // Current format: { elements: [...] }
+  // Current format: { elements: [...] } (+ optional analysisId)
   if (typeof parsed === "object" && !Array.isArray(parsed)) {
     const obj = parsed as Record<string, unknown>;
     if (Array.isArray(obj.elements)) {
-      const analysisIdRaw = Number(obj.analysisId);
+      const analysisIdRaw = Number(obj.analysisId ?? obj.analysis_id);
       return {
         id: typeof obj.id === "string" && obj.id ? obj.id : createTemplateId(),
         name:
@@ -1328,21 +1366,45 @@ export function parsePdfTemplateFromStorageText(
 export function onlineStorageRecordToPdfTemplate(
   record: OnlineStorage,
 ): PdfTemplate | null {
-  const tpl = parsePdfTemplateFromStorageText(record.text, record.name);
-  if (!tpl) return null;
+  const fromRecord = resolveOnlineStorageAnalysisId(record);
+  let tpl = parsePdfTemplateFromStorageText(record.text, record.name);
 
+  // text buzilgan bo'lsa ham analysis_id bo'lsa ro'yxatda ko'rsatamiz
+  if (!tpl) {
+    if (fromRecord == null) return null;
+    const now = new Date().toISOString();
+    tpl = {
+      id: `storage-${record.id}`,
+      name: record.name?.trim() || "PDF shablon",
+      elements: [],
+      createdAt: record.createdAt || now,
+      updatedAt: record.updatedAt || now,
+      storageId: record.id,
+      analysisId: fromRecord,
+      analysisName:
+        typeof record.analysis === "object" && record.analysis?.name
+          ? record.analysis.name.trim()
+          : "",
+    };
+  }
+
+  const fromElements = resolvePdfTemplateAnalysisId(tpl);
   const analysisId =
-    Number(record.analysis_id ?? record.analysisId ?? record.analysis?.id) ||
-    Number(tpl.analysisId) ||
-    null;
+    fromRecord ??
+    (Number(tpl.analysisId) > 0 ? Number(tpl.analysisId) : null) ??
+    fromElements;
   const analysisName =
-    record.analysis?.name?.trim() || tpl.analysisName?.trim() || "";
+    (typeof record.analysis === "object" && record.analysis?.name?.trim()) ||
+    tpl.analysisName?.trim() ||
+    "";
 
   if (analysisId && analysisId > 0) {
-    const table = tpl.elements.find(el => el.type === "table");
-    if (table && !table.analysisId) {
-      table.analysisId = analysisId;
-      if (analysisName) table.analysisName = analysisName;
+    for (const el of tpl.elements) {
+      if (el.type !== "table") continue;
+      if (!el.analysisId) {
+        el.analysisId = analysisId;
+        if (analysisName) el.analysisName = analysisName;
+      }
     }
   }
 
@@ -1364,16 +1426,24 @@ export async function fetchPdfTemplatesFromApi(): Promise<PdfTemplate[]> {
     .map(onlineStorageRecordToPdfTemplate)
     .filter((t): t is PdfTemplate => t != null);
 
-  // Always mirror API (company-scoped) into session cache — never keep another company's drafts
-  savePdfTemplates(templates);
+  // Cache ixtiyoriy — quota to'lsa ham xotiradagi ro'yxat qaytadi
+  try {
+    savePdfTemplates(templates);
+  } catch {
+    /* ignore */
+  }
 
-  const activeId = getActiveTemplateId();
-  if (activeId && !templates.some(t => t.id === activeId)) {
-    setActiveTemplateId(templates[0]?.id ?? null);
-  } else if (!activeId && templates[0]) {
-    setActiveTemplateId(templates[0].id);
-  } else if (templates.length === 0) {
-    setActiveTemplateId(null);
+  try {
+    const activeId = getActiveTemplateId();
+    if (activeId && !templates.some(t => t.id === activeId)) {
+      setActiveTemplateId(templates[0]?.id ?? null);
+    } else if (!activeId && templates[0]) {
+      setActiveTemplateId(templates[0].id);
+    } else if (templates.length === 0) {
+      setActiveTemplateId(null);
+    }
+  } catch {
+    /* ignore */
   }
 
   return templates;
@@ -1431,18 +1501,38 @@ export async function deletePdfTemplateRemote(template: PdfTemplate): Promise<vo
 export function globalStorageRecordToPdfTemplate(
   record: GlobalStorage,
 ): PdfTemplate | null {
-  const tpl = parsePdfTemplateFromStorageText(record.text, record.name);
-  if (!tpl) return null;
+  const fromRecord = resolveGlobalStorageAnalysisId(record);
+  let tpl = parsePdfTemplateFromStorageText(record.text, record.name);
 
-  const analysisId =
-    Number(record.analysis_id ?? record.analysisId ?? record.analysis?.id) ||
-    Number(tpl.analysisId) ||
-    null;
+  if (!tpl) {
+    if (fromRecord == null) return null;
+    const now = new Date().toISOString();
+    tpl = {
+      id: `global-${record.id}`,
+      name: record.name?.trim() || "PDF shablon",
+      elements: [],
+      createdAt: record.createdAt || now,
+      updatedAt: record.updatedAt || now,
+      storageId: null,
+      globalStorageId: record.id,
+      analysisId: fromRecord,
+      analysisName:
+        typeof record.analysis === "object" && record.analysis?.name
+          ? record.analysis.name.trim()
+          : "",
+    };
+  }
+
+  const analysisId = fromRecord ?? (Number(tpl.analysisId) > 0 ? Number(tpl.analysisId) : null);
   const analysisName =
-    record.analysis?.name?.trim() || tpl.analysisName?.trim() || "";
-  const companyId =
-    Number(record.company_id ?? record.companyId ?? record.company?.id) || null;
-  const companyName = record.company?.name?.trim() || tpl.companyName?.trim() || "";
+    (typeof record.analysis === "object" && record.analysis?.name?.trim()) ||
+    tpl.analysisName?.trim() ||
+    "";
+  const companyId = resolveGlobalStorageCompanyId(record) ?? (Number(tpl.companyId) > 0 ? Number(tpl.companyId) : null);
+  const companyName =
+    (typeof record.company === "object" && record.company?.name?.trim()) ||
+    tpl.companyName?.trim() ||
+    "";
 
   if (analysisId && analysisId > 0) {
     const table = tpl.elements.find(el => el.type === "table");

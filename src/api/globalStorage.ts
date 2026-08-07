@@ -45,23 +45,37 @@ export type GlobalStorageFullResponse = {
 /** Token talab qilinmaydi — global shablonlar ochiq API */
 const GLOBAL_AUTH = false;
 
+function pickRelationId(
+  direct?: number | string | null,
+  camel?: number | string | null,
+  relation?: unknown,
+): unknown {
+  if (direct != null && direct !== "") return direct;
+  if (camel != null && camel !== "") return camel;
+  if (relation == null || relation === "") return null;
+  if (typeof relation === "number" || typeof relation === "string") return relation;
+  if (typeof relation === "object") {
+    const o = relation as Record<string, unknown>;
+    return o.id ?? null;
+  }
+  return null;
+}
+
 export function resolveGlobalStorageAnalysisId(item: {
   analysis_id?: number | string | null;
   analysisId?: number | string | null;
-  analysis?: { id?: number | string | null } | null;
+  analysis?: unknown;
 }): number | null {
-  const raw = item.analysis_id ?? item.analysisId ?? item.analysis?.id;
-  const n = Number(raw);
+  const n = Number(pickRelationId(item.analysis_id, item.analysisId, item.analysis));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 export function resolveGlobalStorageCompanyId(item: {
   company_id?: number | string | null;
   companyId?: number | string | null;
-  company?: { id?: number | string | null } | null;
+  company?: unknown;
 }): number | null {
-  const raw = item.company_id ?? item.companyId ?? item.company?.id;
-  const n = Number(raw);
+  const n = Number(pickRelationId(item.company_id, item.companyId, item.company));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 

@@ -34,27 +34,61 @@ export type OnlineStorageFullResponse = {
   limit: number;
 };
 
+function pickAnalysisIdRaw(item: {
+  analysis_id?: number | string | null;
+  analysisId?: number | string | null;
+  analysis?: unknown;
+}): unknown {
+  if (item.analysis_id != null && item.analysis_id !== "") return item.analysis_id;
+  if (item.analysisId != null && item.analysisId !== "") return item.analysisId;
+  const a = item.analysis;
+  if (a == null || a === "") return null;
+  if (typeof a === "number" || typeof a === "string") return a;
+  if (typeof a === "object") {
+    const o = a as Record<string, unknown>;
+    return o.id ?? o.analysis_id ?? o.analysisId ?? null;
+  }
+  return null;
+}
+
 export function resolveOnlineStorageAnalysisId(item: {
   analysis_id?: number | string | null;
   analysisId?: number | string | null;
-  analysis?: { id?: number | string | null } | null;
+  analysis?: unknown;
 }): number | null {
-  const raw = item.analysis_id ?? item.analysisId ?? item.analysis?.id;
-  const n = Number(raw);
+  const n = Number(pickAnalysisIdRaw(item));
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-function normalizeList(raw: unknown): OnlineStorage[] {
-  let list: OnlineStorage[] = [];
-  if (Array.isArray(raw)) list = raw as OnlineStorage[];
-  else if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    const data = obj.data ?? obj.items ?? obj.result ?? obj.onlinestorages ?? obj.onlineStorages;
-    if (Array.isArray(data)) list = data as OnlineStorage[];
+function extractOnlineStorageArray(raw: unknown): OnlineStorage[] {
+  if (Array.isArray(raw)) return raw as OnlineStorage[];
+  if (!raw || typeof raw !== "object") return [];
+  const obj = raw as Record<string, unknown>;
+  const candidates = [
+    obj.data,
+    obj.items,
+    obj.result,
+    obj.onlinestorages,
+    obj.onlineStorages,
+  ];
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c as OnlineStorage[];
+    if (c && typeof c === "object") {
+      const nested = c as Record<string, unknown>;
+      if (Array.isArray(nested.data)) return nested.data as OnlineStorage[];
+      if (Array.isArray(nested.items)) return nested.items as OnlineStorage[];
+    }
   }
+  return [];
+}
 
-  return list.map(item => {
-    const analysis_id = resolveOnlineStorageAnalysisId(item);
+function normalizeList(raw: unknown): OnlineStorage[] {
+  return extractOnlineStorageArray(raw).map(item => {
+    const analysis_id = resolveOnlineStorageAnalysisId(item as {
+      analysis_id?: number | string | null;
+      analysisId?: number | string | null;
+      analysis?: unknown;
+    });
     return analysis_id != null ? { ...item, analysis_id } : item;
   });
 }

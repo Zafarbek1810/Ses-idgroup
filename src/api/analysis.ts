@@ -72,13 +72,26 @@ function normalizeAnalysisRecord(raw: unknown): Analysis | null {
   const o = raw as Record<string, unknown>;
   const id = Number(o.id);
   if (!Number.isFinite(id)) return null;
+  const laboratory =
+    normalizeLaboratory(o.laboratory ?? o.lab) ??
+    (() => {
+      const labId = Number(o.laboratory_id ?? o.laboratoryId);
+      if (!Number.isFinite(labId) || labId <= 0) return null;
+      return {
+        id: labId,
+        name: String(o.laboratory_name ?? o.laboratoryName ?? ""),
+        createdAt: "",
+        lab_director: null,
+      };
+    })();
+
   return {
     id,
     name: String(o.name ?? ""),
     shortname: String(o.shortname ?? o.shortName ?? ""),
     price: String(o.price ?? ""),
     createdAt: String(o.createdAt ?? o.created_at ?? ""),
-    laboratory: normalizeLaboratory(o.laboratory ?? o.lab),
+    laboratory,
     onlinestorage: analysisHasOnlineStorage(o as unknown as Analysis),
   };
 }

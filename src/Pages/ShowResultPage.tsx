@@ -71,22 +71,30 @@ function seedFillFromTemplate(
   for (let r = 0; r < grid.headerRows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const cell = grid.headerCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
+      if (cell.covered) continue;
       const key = headerCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
+      const hasSaved = Object.prototype.hasOwnProperty.call(saved, key);
+      // Public view: valueMode yo'qolgan bo'lsa ham saqlangan qiymatni ko'rsatamiz
+      if (!isDynamicCell(cell) && !hasSaved) continue;
+      next[key] = hasSaved ? String(saved[key] ?? "") : "";
     }
   }
 
   for (let r = 0; r < grid.bodyRows; r++) {
     for (let c = 0; c < grid.cols; c++) {
       const cell = grid.bodyCells[r][c];
-      if (cell.covered || !isDynamicCell(cell)) continue;
+      if (cell.covered) continue;
       const key = bodyCellKey(r, c);
-      next[key] = Object.prototype.hasOwnProperty.call(saved, key)
-        ? String(saved[key] ?? "")
-        : "";
+      const hasSaved = Object.prototype.hasOwnProperty.call(saved, key);
+      if (!isDynamicCell(cell) && !hasSaved) continue;
+      next[key] = hasSaved ? String(saved[key] ?? "") : "";
+    }
+  }
+
+  // Shablon kataklari bilan mos kelmasa ham, saqlangan fill larni saqlab qolamiz
+  for (const [k, v] of Object.entries(saved)) {
+    if (!Object.prototype.hasOwnProperty.call(next, k)) {
+      next[k] = String(v ?? "");
     }
   }
   return next;
@@ -173,7 +181,40 @@ export function ShowResultPage({ params }: { params: ShowResultParams }) {
           table.analysisName = analysisName;
         }
 
-        const savedItems = getResultItems(result);
+        let savedItems = getResultItems(result);
+        // Order javobida natija biriktirilgan bo'lishi mumkin
+        if (savedItems.length === 0 && order && typeof order === "object") {
+          const orderBag = order as unknown as Record<string, unknown>;
+          const embedded =
+            orderBag.result ??
+            orderBag.results ??
+            orderBag.result_item ??
+            orderBag.result_items;
+          if (embedded) {
+            if (Array.isArray(embedded)) {
+              for (const entry of embedded) {
+                if (!entry || typeof entry !== "object") continue;
+                const fromEntry = getResultItems(entry as ResultRecord);
+                if (fromEntry.length > 0) {
+                  savedItems = fromEntry;
+                  break;
+                }
+                // To'g'ridan-to'g'ri result_item elementlari
+                if (
+                  "name" in (entry as object) ||
+                  "normValue" in (entry as object) ||
+                  "norm_value" in (entry as object)
+                ) {
+                  savedItems = embedded as ReturnType<typeof getResultItems>;
+                  break;
+                }
+              }
+            } else if (typeof embedded === "object") {
+              savedItems = getResultItems(embedded as ResultRecord);
+            }
+          }
+        }
+
         const saved = decodeGridFillFromItems(savedItems, analysisId);
         const fillValues = seedFillFromTemplate(bound, saved);
         const companyName = await resolveStoredCompanyName();

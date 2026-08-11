@@ -79,37 +79,84 @@ export function resolveResultItemAnalysisId(
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+const GRID_PREFIX = "__grid__:";
+const SEV_PREFIX = "__sev__:";
+
 export function getResultItemNormValue(
   item: Pick<ResultItemPayload, "normValue" | "norm_value"> & Record<string, unknown>,
 ): string {
   const raw = item.normValue ?? item.norm_value ?? "";
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    // Severity object (API parse qilgan bo'lishi mumkin)
+    if ("mild" in obj || "moderate" in obj || "severe" in obj) {
+      return `${SEV_PREFIX}${JSON.stringify({
+        mild: String(obj.mild ?? ""),
+        moderate: String(obj.moderate ?? ""),
+        severe: String(obj.severe ?? ""),
+      })}`;
+    }
+    // Grid fill map
+    return `${GRID_PREFIX}${JSON.stringify(raw)}`;
+  }
   return String(raw ?? "").trim();
+}
+
+function coerceResultItemList(raw: unknown): ResultItemPayload[] {
+  if (Array.isArray(raw)) return raw as ResultItemPayload[];
+  if (typeof raw === "string" && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as ResultItemPayload[];
+    } catch {
+      /* ignore */
+    }
+  }
+  return [];
 }
 
 export function getResultItems(r: ResultRecord | null | undefined): ResultItemPayload[] {
   if (!r) return [];
-  const list =
-    r.result_item ??
-    r.result_items ??
-    r.resultItems ??
-    r.items ??
-    (r as { ResultItems?: ResultItemPayload[] }).ResultItems;
-  return Array.isArray(list) ? list : [];
+  const bag = r as Record<string, unknown>;
+  const candidates = [
+    bag.result_item,
+    bag.result_items,
+    bag.resultItems,
+    bag.ResultItem,
+    bag.ResultItems,
+    bag.items,
+  ];
+  for (const c of candidates) {
+    const list = coerceResultItemList(c);
+    if (list.length > 0) return list;
+  }
+  // Bo'sh massiv topilsa ham qaytaramiz (yuqorida length 0 skip qilindi)
+  for (const c of candidates) {
+    if (Array.isArray(c)) return c as ResultItemPayload[];
+  }
+  return [];
 }
 
 function normalizeResultRecord(raw: unknown): ResultRecord | null {
   if (!raw || typeof raw !== "object") return null;
   const obj = raw as Record<string, unknown>;
   let rec = raw as ResultRecord;
+  let outerItems = getResultItems(rec);
 
   const inner = obj.data ?? obj.result ?? obj.item;
   if (inner && typeof inner === "object" && !Array.isArray(inner)) {
     const nested = inner as ResultRecord;
     const nestedItems = getResultItems(nested);
-    const outerItems = getResultItems(rec);
-    // Prefer nested entity when it has id/items (common { data: record } envelope)
-    if (nested.id != null || (nestedItems.length > 0 && outerItems.length === 0)) {
-      rec = nested;
+    // Nested entity + tashqi envelope dagi itemlarni birlashtiramiz
+    // (ba'zi API lar id ni data ichida, result_item ni tashqarida qaytaradi)
+    if (nested.id != null || nestedItems.length > 0 || outerItems.length > 0) {
+      const mergedItems = nestedItems.length > 0 ? nestedItems : outerItems;
+      rec = {
+        ...(raw as ResultRecord),
+        ...nested,
+        result_item: mergedItems,
+      };
+      outerItems = mergedItems;
     }
   }
 
@@ -127,7 +174,23 @@ function normalizeResultRecord(raw: unknown): ResultRecord | null {
     ...(orderId != null ? { order_id: orderId } : {}),
     result_item: items.map(item => {
       const analysisId = resolveResultItemAnalysisId(item);
-      const normValue = getResultItemNormValue(item) || item.normValue || null;
+      const normRaw = item.normValue ?? item.norm_value;
+      let normValue: string | null = null;
+      if (normRaw && typeof normRaw === "object" && !Array.isArray(normRaw)) {
+        const obj = normRaw as Record<string, unknown>;
+        if ("mild" in obj || "moderate" in obj || "severe" in obj) {
+          normValue = `${SEV_PREFIX}${JSON.stringify({
+            mild: String(obj.mild ?? ""),
+            moderate: String(obj.moderate ?? ""),
+            severe: String(obj.severe ?? ""),
+          })}`;
+        } else {
+          normValue = `${GRID_PREFIX}${JSON.stringify(normRaw)}`;
+        }
+      } else {
+        const asStr = getResultItemNormValue(item);
+        normValue = asStr || null;
+      }
       return {
         ...item,
         ...(analysisId != null ? { analysis_id: analysisId } : {}),
@@ -182,13 +245,33 @@ export async function getResultByIdTwo(orderId: number) {
     auth: false,
     fallbackError: "Natijani yuklab bo'lmadi",
   });
-  const normalized = normalizeResultRecord(raw);
-  if (!normalized) {
-    // Ba'zan API { data: [...] } yoki list qaytarishi mumkin
+  let normalized = normalizeResultRecord(raw);
+
+  // Ba'zan getbytwo parent ni qaytaradi, itemlar list/envelope da bo'ladi
+  if (!normalized || getResultItems(normalized).length === 0) {
     const list = normalizeList(raw);
     const byOrder = findResultByOrderId(list, orderId);
-    if (byOrder) return byOrder;
-    if (list[0]) return list[0];
+    const richer =
+      (byOrder && getResultItems(byOrder).length > 0 ? byOrder : null) ??
+      list.find(r => getResultItems(r).length > 0) ??
+      byOrder ??
+      list[0] ??
+      null;
+    if (richer) {
+      if (!normalized) return richer;
+      if (getResultItems(normalized).length === 0 && getResultItems(richer).length > 0) {
+        return {
+          ...normalized,
+          ...richer,
+          id: normalized.id || richer.id,
+          order_id: resolveResultOrderId(normalized) ?? resolveResultOrderId(richer) ?? orderId,
+          result_item: getResultItems(richer),
+        };
+      }
+    }
+  }
+
+  if (!normalized) {
     throw new Error("Natijani yuklab bo'lmadi");
   }
   return normalized;
@@ -208,8 +291,6 @@ export function findResultByOrderId(
   return results.find(r => resolveResultOrderId(r) === orderId) ?? null;
 }
 
-const SEV_PREFIX = "__sev__:";
-const GRID_PREFIX = "__grid__:";
 export const PDF_TABLE_RESULT_NAME = "__pdf_table__";
 
 /** Pack mild/moderate/severe into normValue (string), keep other Value fields API-compatible */
@@ -246,32 +327,80 @@ export function encodeGridFill(values: Record<string, string>): string {
   return `${GRID_PREFIX}${JSON.stringify(values)}`;
 }
 
+function parseGridFillPayload(raw: unknown): Record<string, string> | null {
+  if (raw == null || raw === "") return null;
+
+  if (typeof raw === "object" && !Array.isArray(raw)) {
+    const obj = raw as Record<string, unknown>;
+    const entries = Object.entries(obj);
+    if (entries.length === 0) return {};
+    // Fill map: "0:1", "h:0:0" — severity map emas
+    const looksLikeFill = entries.some(([k]) => /^\d+:\d+$/.test(k) || /^h:\d+:\d+$/.test(k));
+    if (looksLikeFill) {
+      return Object.fromEntries(entries.map(([k, v]) => [k, String(v ?? "")]));
+    }
+    return null;
+  }
+
+  if (typeof raw !== "string") return null;
+  let s = raw.trim();
+  if (!s) return null;
+  if (s.startsWith(GRID_PREFIX)) s = s.slice(GRID_PREFIX.length);
+  // Severity yoki oddiy matn — grid emas
+  if (s.startsWith(SEV_PREFIX)) return null;
+  try {
+    const parsed = JSON.parse(s) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed as Record<string, unknown>;
+    const entries = Object.entries(obj);
+    const looksLikeFill =
+      entries.length === 0 ||
+      entries.some(([k]) => /^\d+:\d+$/.test(k) || /^h:\d+:\d+$/.test(k));
+    if (!looksLikeFill) return null;
+    return Object.fromEntries(entries.map(([k, v]) => [k, String(v ?? "")]));
+  } catch {
+    return null;
+  }
+}
+
 function isGridMetaItem(item: ResultItemPayload): boolean {
-  const norm = getResultItemNormValue(item);
-  return item.name === PDF_TABLE_RESULT_NAME || norm.startsWith(GRID_PREFIX);
+  if (item.name === PDF_TABLE_RESULT_NAME) return true;
+  const bag = item as Record<string, unknown>;
+  const raw = bag.normValue ?? bag.norm_value ?? "";
+  if (typeof raw === "object" && raw && !Array.isArray(raw)) {
+    return parseGridFillPayload(raw) != null;
+  }
+  const norm = String(raw ?? "").trim();
+  return norm.startsWith(GRID_PREFIX) || parseGridFillPayload(norm) != null;
 }
 
 export function decodeGridFillFromItems(
   items: ResultItemPayload[],
   analysisId: number,
 ): Record<string, string> {
+  const matched = items.filter(
+    i => resolveResultItemAnalysisId(i) === analysisId && isGridMetaItem(i),
+  );
   const meta =
-    items.find(
-      i => resolveResultItemAnalysisId(i) === analysisId && isGridMetaItem(i),
-    ) ??
+    matched[0] ??
     // Fallback: single grid payload on this result (analysis id field missing/mismatched)
     (items.filter(isGridMetaItem).length === 1
       ? items.find(isGridMetaItem)
-      : undefined);
+      : // Oxirgi urinish: shu analysis_id dagi istalgan itemdan grid o'qish
+        items.find(i => {
+          if (resolveResultItemAnalysisId(i) !== analysisId) return false;
+          const bag = i as Record<string, unknown>;
+          return parseGridFillPayload(bag.normValue ?? bag.norm_value) != null;
+        }));
 
-  const raw = meta ? getResultItemNormValue(meta) : "";
-  if (!raw.startsWith(GRID_PREFIX)) return {};
-  try {
-    const parsed = JSON.parse(raw.slice(GRID_PREFIX.length)) as Record<string, string>;
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  if (!meta) return {};
+  const bag = meta as Record<string, unknown>;
+  return (
+    parseGridFillPayload(bag.normValue) ??
+    parseGridFillPayload(bag.norm_value) ??
+    parseGridFillPayload(getResultItemNormValue(meta)) ??
+    {}
+  );
 }
 
 export function buildResultItemFromGrid(

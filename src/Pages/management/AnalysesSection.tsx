@@ -156,12 +156,15 @@ function AnalysisFormModal({
             <label className="block text-xs font-semibold text-foreground mb-1.5">Laboratoriya *</label>
             <select
               value={form.laboratory_id === "" ? "" : String(form.laboratory_id)}
-              onChange={e => set("laboratory_id", e.target.value ? Number(e.target.value) : "")}
+              onChange={e => {
+                const raw = e.target.value;
+                set("laboratory_id", raw ? Number(raw) : "");
+              }}
               className={inputCls(errors.laboratory_id)}
             >
               <option value="">Laboratoriya tanlang</option>
               {laboratories.map(lab => (
-                <option key={lab.id} value={lab.id}>{lab.name}</option>
+                <option key={lab.id} value={String(lab.id)}>{lab.name}</option>
               ))}
             </select>
             {errors.laboratory_id && <p className="text-[11px] text-red-500 mt-1">{errors.laboratory_id}</p>}
@@ -267,13 +270,18 @@ export function AnalysesSection({
 
   const handleSave = async (form: AnalysisForm) => {
     if (!modal || (modal.type !== "add" && modal.type !== "edit")) return;
-    if (form.laboratory_id === "") return;
+
+    const laboratoryId = Number(form.laboratory_id);
+    if (!Number.isFinite(laboratoryId) || laboratoryId <= 0) {
+      pushToast("Laboratoriya tanlang", "error");
+      return;
+    }
 
     const payload: AnalysisPayload = {
       name: String(form.name ?? "").trim(),
       shortname: String(form.shortname ?? "").trim(),
       price: String(form.price ?? "").trim(),
-      laboratory_id: form.laboratory_id,
+      laboratory_id: laboratoryId,
     };
 
     setSaving(true);
@@ -285,7 +293,13 @@ export function AnalysesSection({
         if (page !== 1) setPage(1);
         else await loadItems({ page: 1 });
       } else {
-        await updateAnalysis(modal.item.id, payload);
+        // Edit: laboratory_id ham majburiy — laboratoriya o'zgartirilganda PATCH bodyda ketadi
+        await updateAnalysis(modal.item.id, {
+          name: payload.name,
+          shortname: payload.shortname,
+          price: payload.price,
+          laboratory_id: payload.laboratory_id,
+        });
         pushToast(`${payload.name} yangilandi`);
         setModal(null);
         await loadItems({ page });
@@ -604,12 +618,16 @@ export function AnalysesSection({
       )}
       {modal?.type === "edit" && (
         <AnalysisFormModal
+          key={`edit-${modal.item.id}`}
           mode="edit"
           initial={{
             name: String(modal.item.name ?? ""),
             shortname: String(modal.item.shortname ?? ""),
             price: String(modal.item.price ?? ""),
-            laboratory_id: modal.item.laboratory?.id ?? "",
+            laboratory_id:
+              modal.item.laboratory?.id != null && Number(modal.item.laboratory.id) > 0
+                ? Number(modal.item.laboratory.id)
+                : "",
           }}
           laboratories={laboratories}
           primaryColor={primaryColor}

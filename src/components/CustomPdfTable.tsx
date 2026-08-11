@@ -358,41 +358,46 @@ export function CustomPdfTable({
                 );
               }
 
-              // Results: dynamic header can be filled
-              if (filling && dynamic) {
+              // Results: dynamic header can be filled (yoki saqlangan fill mavjud)
+              if (filling) {
                 const key = headerCellKey(ri, ci);
-                const value = fillValues?.[key] ?? cell.text ?? "";
-                if (readOnly) {
+                const hasFill = Object.prototype.hasOwnProperty.call(fillValues ?? {}, key);
+                if (dynamic || (readOnly && hasFill)) {
+                  const value = hasFill
+                    ? String(fillValues?.[key] ?? "")
+                    : (cell.text ?? "");
+                  if (readOnly) {
+                    return (
+                      <th
+                        key={ci}
+                        colSpan={cs}
+                        rowSpan={rs}
+                        style={cellBorderStyle}
+                        className={`${cellBorder} ${pad} font-semibold text-center bg-slate-50`}
+                      >
+                        {value || "\u00a0"}
+                      </th>
+                    );
+                  }
                   return (
                     <th
                       key={ci}
                       colSpan={cs}
                       rowSpan={rs}
                       style={cellBorderStyle}
-                      className={`${cellBorder} ${pad} font-semibold text-center bg-slate-50`}
+                      className={`${cellBorder} ${pad} p-0 font-semibold text-center bg-amber-50/40`}
                     >
-                      {value || "\u00a0"}
+                      <input
+                        value={value}
+                        onChange={e => onFillChange?.(key, e.target.value)}
+                        className={`${inputCls} font-semibold`}
+                        onClick={e => e.stopPropagation()}
+                        onPointerDown={e => e.stopPropagation()}
+                        placeholder="Kiriting..."
+                      />
                     </th>
                   );
                 }
-                return (
-                  <th
-                    key={ci}
-                    colSpan={cs}
-                    rowSpan={rs}
-                    style={cellBorderStyle}
-                    className={`${cellBorder} ${pad} p-0 font-semibold text-center bg-amber-50/40`}
-                  >
-                    <input
-                      value={value}
-                      onChange={e => onFillChange?.(key, e.target.value)}
-                      className={`${inputCls} font-semibold`}
-                      onClick={e => e.stopPropagation()}
-                      onPointerDown={e => e.stopPropagation()}
-                      placeholder="Kiriting..."
-                    />
-                  </th>
-                );
               }
 
               return (
@@ -503,8 +508,11 @@ export function CustomPdfTable({
 
                 if (filling) {
                   const key = bodyCellKey(ri, ci);
-                  if (dynamic) {
-                    const value = fillValues?.[key] ?? cell.text ?? "";
+                  const hasFill = Object.prototype.hasOwnProperty.call(fillValues ?? {}, key);
+                  if (dynamic || (readOnly && hasFill)) {
+                    const value = hasFill
+                      ? String(fillValues?.[key] ?? "")
+                      : (cell.text ?? "");
                     if (readOnly) {
                       return (
                         <td

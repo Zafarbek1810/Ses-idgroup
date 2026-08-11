@@ -75,8 +75,17 @@ function normalizeAnalysisRecord(raw: unknown): Analysis | null {
   const laboratory =
     normalizeLaboratory(o.laboratory ?? o.lab) ??
     (() => {
-      const labId = Number(o.laboratory_id ?? o.laboratoryId);
-      if (!Number.isFinite(labId) || labId <= 0) return null;
+      const labId = Number(o.laboratory_id ?? o.laboratoryId ?? o.lab_id ?? o.labId);
+      if (!Number.isFinite(labId) || labId <= 0) {
+        // ba'zi API lar laboratory ni oddiy id (number) qilib qaytaradi
+        if (typeof o.laboratory === "number" || typeof o.lab === "number") {
+          const bare = Number(o.laboratory ?? o.lab);
+          if (Number.isFinite(bare) && bare > 0) {
+            return { id: bare, name: "", createdAt: "", lab_director: null };
+          }
+        }
+        return null;
+      }
       return {
         id: labId,
         name: String(o.laboratory_name ?? o.laboratoryName ?? ""),
@@ -189,9 +198,16 @@ export function addAnalysis(payload: AnalysisPayload) {
 }
 
 export function updateAnalysis(id: number, payload: AnalysisUpdatePayload) {
+  const body: AnalysisUpdatePayload = { ...payload };
+  if (payload.laboratory_id != null) {
+    const labId = Number(payload.laboratory_id);
+    if (Number.isFinite(labId) && labId > 0) {
+      body.laboratory_id = labId;
+    }
+  }
   return apiRequest<Analysis>(`/analysis/update/${id}`, {
     method: "PATCH",
-    body: payload,
+    body,
     fallbackError: "Analizni yangilab bo'lmadi",
   });
 }

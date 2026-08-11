@@ -40,7 +40,6 @@ export type OrderPatient = {
   birth_day?: string;
   phone?: string;
   sex?: number;
-  passport_number?: string;
   street?: string;
   description?: string;
   village?: string;

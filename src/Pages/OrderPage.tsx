@@ -19,7 +19,6 @@ type PatientFilterForm = {
   last_name: string;
   birth_day: string;
   phone: string;
-  passport_number: string;
 };
 
 const EMPTY_PATIENT_FILTER: PatientFilterForm = {
@@ -27,7 +26,6 @@ const EMPTY_PATIENT_FILTER: PatientFilterForm = {
   last_name: "",
   birth_day: "",
   phone: "",
-  passport_number: "",
 };
 
 const PHONE_PREFIX = "+998";
@@ -35,22 +33,6 @@ const PHONE_PREFIX = "+998";
 function normalizeBirthDay(value: string): string {
   if (!value) return "";
   return value.slice(0, 10);
-}
-
-function formatPassportNumber(raw: string): string {
-  const cleaned = raw.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
-  let letters = "";
-  let digits = "";
-
-  for (const ch of cleaned) {
-    if (letters.length < 2) {
-      if (/[A-Z]/.test(ch)) letters += ch;
-      continue;
-    }
-    if (digits.length < 7 && /\d/.test(ch)) digits += ch;
-  }
-
-  return letters + digits;
 }
 
 function formatPhoneNumber(raw: string): string {
@@ -68,20 +50,17 @@ function matchesPatientFilter(p: Patient, filter: PatientFilterForm): boolean {
   const fn = filter.first_name.trim().toLowerCase();
   const ln = filter.last_name.trim().toLowerCase();
   const phone = filterPhoneValue(filter.phone).toLowerCase();
-  const passport = filter.passport_number.trim().toLowerCase();
   const birth = filter.birth_day.trim();
 
   if (fn && !(p.first_name ?? "").toLowerCase().includes(fn)) return false;
   if (ln && !(p.last_name ?? "").toLowerCase().includes(ln)) return false;
   if (phone && !(p.phone ?? "").toLowerCase().includes(phone)) return false;
-  if (passport && !(p.passport_number ?? "").toLowerCase().includes(passport)) return false;
   if (birth && normalizeBirthDay(p.birth_day ?? "") !== birth) return false;
   return true;
 }
 
 function buildPatientSearchQuery(filter: PatientFilterForm): string {
   return [
-    filter.passport_number,
     filterPhoneValue(filter.phone),
     filter.first_name,
     filter.last_name,
@@ -97,7 +76,6 @@ function hasPatientFilter(filter: PatientFilterForm): boolean {
     Boolean(filter.first_name.trim()) ||
     Boolean(filter.last_name.trim()) ||
     Boolean(filter.birth_day.trim()) ||
-    Boolean(filter.passport_number.trim()) ||
     Boolean(filterPhoneValue(filter.phone))
   );
 }
@@ -566,10 +544,6 @@ function ReceiptModal({
             <div className="flex justify-between gap-3">
               <span className="text-muted-foreground">Telefon</span>
               <span className="text-foreground">{patient.phone || "—"}</span>
-            </div>
-            <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">Passport</span>
-              <span className="text-foreground">{patient.passport_number || "—"}</span>
             </div>
           </div>
 
@@ -1112,21 +1086,6 @@ export function OrderPage({
                   className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
                 />
               </FilterField>
-              <FilterField label="Passport">
-                <input
-                  type="text"
-                  value={patientFilter.passport_number}
-                  placeholder="AA1234567"
-                  maxLength={9}
-                  autoCapitalize="characters"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  onChange={e =>
-                    setPatientFilterField("passport_number", formatPassportNumber(e.target.value))
-                  }
-                  className="w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground placeholder-muted-foreground focus:outline-none focus:border-[var(--primary)] transition-all"
-                />
-              </FilterField>
               <button
                 type="submit"
                 disabled={searchingPatients}
@@ -1154,9 +1113,6 @@ export function OrderPage({
                     Bemor
                   </th>
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                    Passport
-                  </th>
-                  <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
                     Telefon
                   </th>
                   <th className="px-4 py-3 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -1179,14 +1135,14 @@ export function OrderPage({
               <tbody>
                 {searchingPatients ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-16 text-center">
+                    <td colSpan={8} className="px-4 py-16 text-center">
                       <Loader2 className="w-7 h-7 animate-spin mx-auto" style={{ color: primaryColor }} />
                       <p className="text-sm text-muted-foreground mt-3">Yuklanmoqda...</p>
                     </td>
                   </tr>
                 ) : patientMatches.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="px-4 py-16 text-center">
+                    <td colSpan={8} className="px-4 py-16 text-center">
                       {patientSearched ? (
                         <>
                           <UserPlus className="w-10 h-10 mx-auto text-muted-foreground mb-3" />
@@ -1225,9 +1181,6 @@ export function OrderPage({
                             {[p.village, p.street].filter(Boolean).join(", ")}
                           </p>
                         ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-[12px] font-mono text-foreground">
-                        {p.passport_number || "—"}
                       </td>
                       <td className="px-4 py-3 text-[12px] text-foreground whitespace-nowrap">
                         {p.phone || "—"}

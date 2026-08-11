@@ -20,7 +20,6 @@ export type Patient = {
   sex: number;
   village: string;
   street: string;
-  passport_number: string;
   description: string;
   district_id?: number;
   district?: PatientDistrict | null;
@@ -35,7 +34,6 @@ export type PatientPayload = {
   sex: number;
   village: string;
   street: string;
-  passport_number: string;
   description: string;
   district_id: number;
   owner_id: number;

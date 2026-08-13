@@ -143,6 +143,12 @@ function parsePrice(raw: string | number | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+type PickedAnalysis = Omit<CartItem, "key" | "status">;
+
+function itemKey(laboratoryId: number, analysisId: number) {
+  return `${laboratoryId}:${analysisId}`;
+}
+
 function AnalysisPickModal({
   laboratories,
   analyses,
@@ -155,83 +161,152 @@ function AnalysisPickModal({
   analyses: Analysis[];
   primaryColor: string;
   existingKeys: Set<string>;
-  onSave: (items: Omit<CartItem, "key" | "status">[]) => void;
+  onSave: (items: PickedAnalysis[]) => void;
   onClose: () => void;
 }) {
-  const [labId, setLabId] = useState<number | "">("");
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [labId, setLabId] = useState<number | null>(
+    laboratories[0]?.id ?? null,
+  );
+  const [picked, setPicked] = useState<PickedAnalysis[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  const pickedKeys = useMemo(
+    () => new Set(picked.map(p => itemKey(p.laboratory_id, p.analysis_id))),
+    [picked],
+  );
+
   const labAnalyses = useMemo(() => {
-    if (labId === "") return [];
+    if (labId == null) return [];
     return analyses.filter(a => a.laboratory?.id === labId);
   }, [analyses, labId]);
 
   const availableAnalyses = useMemo(
     () =>
-      labAnalyses.filter(a => labId !== "" && !existingKeys.has(`${labId}:${a.id}`)),
+      labAnalyses.filter(
+        a => labId != null && !existingKeys.has(itemKey(labId, a.id)),
+      ),
     [labAnalyses, labId, existingKeys],
   );
 
-  const selectedAnalyses = useMemo(
-    () => availableAnalyses.filter(a => selectedIds.includes(a.id)),
-    [availableAnalyses, selectedIds],
+  const selectedInCurrentLab = useMemo(
+    () =>
+      labId == null
+        ? 0
+        : availableAnalyses.filter(a =>
+            pickedKeys.has(itemKey(labId, a.id)),
+          ).length,
+    [availableAnalyses, labId, pickedKeys],
   );
 
   const selectedTotal = useMemo(
-    () => selectedAnalyses.reduce((sum, a) => sum + parsePrice(a.price), 0),
-    [selectedAnalyses],
+    () => picked.reduce((sum, a) => sum + a.price, 0),
+    [picked],
   );
 
-  const inputCls =
-    "w-full bg-secondary border border-border rounded-xl px-3.5 py-2.5 text-[13px] text-foreground focus:outline-none focus:border-[var(--primary)]";
+  const analysisCountByLab = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const a of analyses) {
+      const id = a.laboratory?.id;
+      if (id == null) continue;
+      if (existingKeys.has(itemKey(id, a.id))) continue;
+      map.set(id, (map.get(id) ?? 0) + 1);
+    }
+    return map;
+  }, [analyses, existingKeys]);
 
-  const toggleAnalysis = (id: number) => {
-    setSelectedIds(prev =>
-      prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id],
+  const pickedCountByLab = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const p of picked) {
+      map.set(p.laboratory_id, (map.get(p.laboratory_id) ?? 0) + 1);
+    }
+    return map;
+  }, [picked]);
+
+  const toggleAnalysis = (analysis: Analysis) => {
+    if (labId == null) return;
+    const key = itemKey(labId, analysis.id);
+    setPicked(prev => {
+      if (prev.some(p => itemKey(p.laboratory_id, p.analysis_id) === key)) {
+        return prev.filter(
+          p => itemKey(p.laboratory_id, p.analysis_id) !== key,
+        );
+      }
+      const lab = laboratories.find(l => l.id === labId);
+      return [
+        ...prev,
+        {
+          analysis_id: analysis.id,
+          laboratory_id: labId,
+          analysis_name: analysis.name,
+          laboratory_name: lab?.name ?? analysis.laboratory?.name ?? "—",
+          price: parsePrice(analysis.price),
+        },
+      ];
+    });
+    setError(null);
+  };
+
+  const toggleAllInLab = () => {
+    if (labId == null || availableAnalyses.length === 0) return;
+    const lab = laboratories.find(l => l.id === labId);
+    const allSelected = selectedInCurrentLab === availableAnalyses.length;
+
+    setPicked(prev => {
+      if (allSelected) {
+        const removeKeys = new Set(
+          availableAnalyses.map(a => itemKey(labId, a.id)),
+        );
+        return prev.filter(
+          p => !removeKeys.has(itemKey(p.laboratory_id, p.analysis_id)),
+        );
+      }
+      const existing = new Set(
+        prev.map(p => itemKey(p.laboratory_id, p.analysis_id)),
+      );
+      const toAdd = availableAnalyses
+        .filter(a => !existing.has(itemKey(labId, a.id)))
+        .map(a => ({
+          analysis_id: a.id,
+          laboratory_id: labId,
+          analysis_name: a.name,
+          laboratory_name: lab?.name ?? a.laboratory?.name ?? "—",
+          price: parsePrice(a.price),
+        }));
+      return [...prev, ...toAdd];
+    });
+    setError(null);
+  };
+
+  const removePicked = (laboratoryId: number, analysisId: number) => {
+    const key = itemKey(laboratoryId, analysisId);
+    setPicked(prev =>
+      prev.filter(p => itemKey(p.laboratory_id, p.analysis_id) !== key),
     );
     setError(null);
   };
 
-  const toggleAll = () => {
-    if (selectedIds.length === availableAnalyses.length) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(availableAnalyses.map(a => a.id));
-    }
+  const clearPicked = () => {
+    setPicked([]);
     setError(null);
   };
 
   const handleSave = () => {
-    if (labId === "") {
-      setError("Laboratoriyani tanlang");
-      return;
-    }
-    if (selectedAnalyses.length === 0) {
+    if (picked.length === 0) {
       setError("Kamida bitta analizni tanlang");
       return;
     }
-    const lab = laboratories.find(l => l.id === labId);
-    onSave(
-      selectedAnalyses.map(a => ({
-        analysis_id: a.id,
-        laboratory_id: labId,
-        analysis_name: a.name,
-        laboratory_name: lab?.name ?? a.laboratory?.name ?? "—",
-        price: parsePrice(a.price),
-      })),
-    );
+    onSave(picked);
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-md overflow-hidden">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-border">
+      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-6xl h-[min(860px,92vh)] flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0">
           <div>
-            <h2 className="font-semibold text-foreground text-[15px]">Analiz qo'shish</h2>
+            <h2 className="font-semibold text-foreground text-[16px]">Analiz qo'shish</h2>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Laboratoriya tanlab, bir nechta analizni belgilang
+              Laboratoriya tanlang, analizlarni belgilang — bir nechta laboratoriyadan yig'ish mumkin
             </p>
           </div>
           <button
@@ -243,120 +318,224 @@ function AnalysisPickModal({
           </button>
         </div>
 
-        <div className="p-6 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-foreground mb-1.5">
-              Laboratoriya *
-            </label>
-            <select
-              value={labId === "" ? "" : String(labId)}
-              onChange={e => {
-                setLabId(e.target.value ? Number(e.target.value) : "");
-                setSelectedIds([]);
-                setError(null);
-              }}
-              className={inputCls}
-            >
-              <option value="">Tanlang</option>
-              {laboratories.map(l => (
-                <option key={l.id} value={l.id}>{l.name}</option>
-              ))}
-            </select>
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[220px_minmax(0,1fr)_280px] divide-y md:divide-y-0 md:divide-x divide-border">
+          {/* 1 — Laboratoriyalar */}
+          <div className="flex flex-col min-h-0 max-h-[220px] md:max-h-none">
+            <div className="px-4 py-3 border-b border-border shrink-0">
+              <p className="text-xs font-semibold text-foreground">Laboratoriyalar</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">
+                {laboratories.length} ta
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {laboratories.length === 0 ? (
+                <p className="px-3 py-4 text-[13px] text-muted-foreground">
+                  Laboratoriya topilmadi
+                </p>
+              ) : (
+                laboratories.map(lab => {
+                  const active = labId === lab.id;
+                  const avail = analysisCountByLab.get(lab.id) ?? 0;
+                  const selectedHere = pickedCountByLab.get(lab.id) ?? 0;
+                  return (
+                    <button
+                      key={lab.id}
+                      type="button"
+                      onClick={() => {
+                        setLabId(lab.id);
+                        setError(null);
+                      }}
+                      className={[
+                        "w-full text-left rounded-xl px-3 py-2.5 transition-colors",
+                        active
+                          ? "bg-secondary border border-border"
+                          : "hover:bg-secondary/70 border border-transparent",
+                      ].join(" ")}
+                      style={
+                        active
+                          ? { boxShadow: `inset 3px 0 0 ${primaryColor}` }
+                          : undefined
+                      }
+                    >
+                      <span className="block text-[13px] font-medium text-foreground truncate">
+                        {lab.name}
+                      </span>
+                      <span className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground">
+                        <span>{avail} ta analiz</span>
+                        {selectedHere > 0 && (
+                          <span
+                            className="font-semibold"
+                            style={{ color: primaryColor }}
+                          >
+                            · {selectedHere} tanlangan
+                          </span>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
           </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <label className="block text-xs font-semibold text-foreground">
-                Analizlar *{" "}
-                <span className="font-normal text-muted-foreground">(bir nechtasini tanlash mumkin)</span>
-              </label>
-              {labId !== "" && availableAnalyses.length > 0 && (
+          {/* 2 — Analizlar (checkbox) */}
+          <div className="flex flex-col min-h-[240px] md:min-h-0">
+            <div className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-foreground">Analizlar</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                  {labId == null
+                    ? "Avval laboratoriya tanlang"
+                    : laboratories.find(l => l.id === labId)?.name ?? "—"}
+                </p>
+              </div>
+              {labId != null && availableAnalyses.length > 0 && (
                 <button
                   type="button"
-                  onClick={toggleAll}
-                  className="text-[11px] font-medium hover:underline"
+                  onClick={toggleAllInLab}
+                  className="text-[11px] font-medium hover:underline shrink-0"
                   style={{ color: primaryColor }}
                 >
-                  {selectedIds.length === availableAnalyses.length
+                  {selectedInCurrentLab === availableAnalyses.length
                     ? "Barchasini bekor qilish"
                     : "Barchasini tanlash"}
                 </button>
               )}
             </div>
 
-            {labId === "" ? (
-              <div className={`${inputCls} text-muted-foreground`}>
-                Avval laboratoriya tanlang
-              </div>
-            ) : availableAnalyses.length === 0 ? (
-              <div className={`${inputCls} text-amber-600`}>
-                {labAnalyses.length === 0
-                  ? "Bu laboratoriyada analiz topilmadi"
-                  : "Barcha analizlar allaqachon qo'shilgan"}
-              </div>
-            ) : (
-              <div className="bg-secondary border border-border rounded-xl max-h-56 overflow-y-auto divide-y divide-border">
-                {availableAnalyses.map(a => {
-                  const checked = selectedIds.includes(a.id);
-                  return (
-                    <label
-                      key={a.id}
-                      className="flex items-center gap-3 px-3.5 py-2.5 cursor-pointer hover:bg-background/60 transition-colors select-none"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={checked}
-                        onChange={() => toggleAnalysis(a.id)}
-                        className="w-4 h-4 rounded border-border accent-[var(--primary)] shrink-0"
-                      />
-                      <span className="flex-1 min-w-0 text-[13px] text-foreground truncate">
-                        {a.name}
-                      </span>
-                      <span className="text-[12px] text-muted-foreground shrink-0">
-                        {formatPrice(parsePrice(a.price))}
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
-
-            {selectedAnalyses.length > 0 && (
-              <p className="mt-2 text-[12px] text-muted-foreground">
-                Tanlangan:{" "}
-                <span className="font-semibold text-foreground">
-                  {selectedAnalyses.length} ta
-                </span>
-                {" В· "}
-                Jami:{" "}
-                <span className="font-semibold text-foreground">
-                  {formatPrice(selectedTotal)}
-                </span>
-              </p>
-            )}
+            <div className="flex-1 overflow-y-auto">
+              {labId == null ? (
+                <p className="px-4 py-8 text-[13px] text-muted-foreground text-center">
+                  Chapdan laboratoriya tanlang
+                </p>
+              ) : availableAnalyses.length === 0 ? (
+                <p className="px-4 py-8 text-[13px] text-amber-600 text-center">
+                  {labAnalyses.length === 0
+                    ? "Bu laboratoriyada analiz topilmadi"
+                    : "Barcha analizlar allaqachon qo'shilgan"}
+                </p>
+              ) : (
+                <div className="divide-y divide-border">
+                  {availableAnalyses.map(a => {
+                    const checked = pickedKeys.has(itemKey(labId, a.id));
+                    return (
+                      <label
+                        key={a.id}
+                        className={[
+                          "flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors select-none",
+                          checked ? "bg-secondary/50" : "hover:bg-secondary/40",
+                        ].join(" ")}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleAnalysis(a)}
+                          className="w-4 h-4 rounded border-border accent-[var(--primary)] shrink-0"
+                        />
+                        <span className="flex-1 min-w-0 text-[13px] text-foreground">
+                          {a.name}
+                        </span>
+                        <span className="text-[12px] text-muted-foreground shrink-0 tabular-nums">
+                          {formatPrice(parsePrice(a.price))}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
 
-          {error && <p className="text-[12px] text-red-500">{error}</p>}
+          {/* 3 — Tanlanganlar yig'indisi */}
+          <div className="flex flex-col min-h-0 max-h-[260px] md:max-h-none bg-secondary/20">
+            <div className="px-4 py-3 border-b border-border shrink-0 flex items-center justify-between gap-2">
+              <div>
+                <p className="text-xs font-semibold text-foreground">Tanlanganlar</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  {picked.length} ta · {formatPrice(selectedTotal)}
+                </p>
+              </div>
+              {picked.length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearPicked}
+                  className="text-[11px] font-medium text-muted-foreground hover:text-foreground hover:underline shrink-0"
+                >
+                  Tozalash
+                </button>
+              )}
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
+              {picked.length === 0 ? (
+                <p className="px-2 py-8 text-[13px] text-muted-foreground text-center">
+                  Tanlangan analizlar shu yerda yig'iladi
+                </p>
+              ) : (
+                picked.map(p => (
+                  <div
+                    key={itemKey(p.laboratory_id, p.analysis_id)}
+                    className="rounded-xl border border-border bg-card px-3 py-2.5"
+                  >
+                    <div className="flex items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[13px] font-medium text-foreground leading-snug">
+                          {p.analysis_name}
+                        </p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                          {p.laboratory_name}
+                        </p>
+                        <p className="text-[12px] text-muted-foreground mt-1 tabular-nums">
+                          {formatPrice(p.price)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          removePicked(p.laboratory_id, p.analysis_id)
+                        }
+                        className="p-1 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors shrink-0"
+                        aria-label="O'chirish"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
 
-        <div className="px-6 py-4 border-t border-border flex gap-3">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
-          >
-            Bekor qilish
-          </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
-            style={{ background: primaryColor }}
-          >
-            {selectedAnalyses.length > 0
-              ? `${selectedAnalyses.length} ta qo'shish`
-              : "Saqlash"}
-          </button>
+        <div className="px-6 py-4 border-t border-border flex flex-col sm:flex-row sm:items-center gap-3 shrink-0">
+          {error && <p className="text-[12px] text-red-500 sm:mr-auto">{error}</p>}
+          {!error && (
+            <p className="text-[12px] text-muted-foreground sm:mr-auto">
+              Jami:{" "}
+              <span className="font-semibold text-foreground">
+                {formatPrice(selectedTotal)}
+              </span>
+            </p>
+          )}
+          <div className="flex gap-3 w-full sm:w-auto">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 sm:flex-none sm:min-w-[120px] py-2.5 px-4 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
+            >
+              Bekor qilish
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              className="flex-1 sm:flex-none sm:min-w-[160px] py-2.5 px-4 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
+              style={{ background: primaryColor }}
+            >
+              {picked.length > 0
+                ? `${picked.length} ta qo'shish`
+                : "Saqlash"}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -623,8 +623,8 @@ export function PatientsPage({
                 {loadingInitial
                   ? "Kassa dan tanlangan bemor formaga joylanmoqda"
                   : selectedPatientId != null
-                    ? "Topilgan bemor — order yaratishga o'tishingiz mumkin"
-                    : "Ma'lumotlarni to'ldiring, keyin order sahifasiga o'ting (bemor avtomatik yaratiladi)"}
+                    ? "Topilgan bemor — buyurtma yaratishga o'tishingiz mumkin"
+                    : "Ma'lumotlarni to'ldiring, keyin buyurtma sahifasiga o'ting (bemor avtomatik yaratiladi)"}
               </p>
             </div>
           </div>

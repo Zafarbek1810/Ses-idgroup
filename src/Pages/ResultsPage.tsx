@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import {
   Search, RefreshCw, FileBarChart2, X, Loader2, CheckCircle, AlertCircle,
-  ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut, Printer, Eye,
+  ArrowLeft, Save, FileText, Lock, Download, ZoomIn, ZoomOut, Printer, Eye, QrCode,
 } from "lucide-react";
 import {
   getAllOrders,
@@ -31,6 +31,13 @@ import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
 import { normalizeRoleName } from "@/lib/roles";
 import { ResultPdfCanvas } from "@/components/ResultPdfCanvas";
+import {
+  ReceiptModal,
+  buildReceiptQrLinks,
+  type ReceiptCartItem,
+  type ReceiptPatient,
+  type ResultQrLink,
+} from "@/components/ReceiptModal";
 import { downloadElementAsPdf, printElementAsPdf } from "@/lib/pdfExport";
 import {
   A4_PREVIEW_HEIGHT,
@@ -49,6 +56,27 @@ import {
 } from "@/lib/pdfTemplate";
 
 type ToastMsg = { id: number; text: string; type: "success" | "error" };
+
+type ReceiptView = {
+  patient: ReceiptPatient;
+  items: ReceiptCartItem[];
+  paymentMethod: string;
+  paidAmount: number;
+  discountPercent: number | null;
+  totalBeforeDiscount: number;
+  resultLinks: ResultQrLink[];
+  initialAnalysisId: number;
+};
+
+function parseMoney(raw: string | number | undefined | null): number {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function orderItemPrice(item: OrderItem): number {
+  const extra = item as OrderItem & { price?: string | number };
+  return parseMoney(item.analysis?.price ?? extra.price);
+}
 
 const PDF_ZOOM_MIN = 0.5;
 const PDF_ZOOM_MAX = 2;
@@ -244,11 +272,14 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
   const canEditResults = !isKassir;
 
   const [rows, setRows] = useState<OrderAnalysisRow[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]);
   const [resultsCache, setResultsCache] = useState<ResultRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [selected, setSelected] = useState<OrderAnalysisRow | null>(null);
+  const [qrLoadingKey, setQrLoadingKey] = useState<string | null>(null);
+  const [receiptView, setReceiptView] = useState<ReceiptView | null>(null);
   const [template, setTemplate] = useState<PdfTemplate | null>(null);
   const [availableTemplates, setAvailableTemplates] = useState<PdfTemplate[]>([]);
   const [fillValues, setFillValues] = useState<Record<string, string>>({});
@@ -280,6 +311,7 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
           (ordersRaw as { orders?: Order[] })?.orders ??
           []);
       setResultsCache(results);
+      setOrders(orders);
       setRows(flattenOrderAnalyses(orders, results));
     } catch (err) {
       pushToast(err instanceof ApiError ? err.message : "Yuklab bo'lmadi", "error");
@@ -377,6 +409,93 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
     setFillValues({});
     setDynamicCtx(null);
     setPdfZoom(PDF_ZOOM_DEFAULT);
+  };
+
+  const openReceiptQr = async (
+    event: React.MouseEvent,
+    row: OrderAnalysisRow,
+  ) => {
+    event.stopPropagation();
+    if (qrLoadingKey) return;
+    setQrLoadingKey(row.key);
+    try {
+      let order = orders.find(o => o.id === row.orderId) ?? null;
+      try {
+        order = await getOrderById(row.orderId);
+      } catch {
+        /* list dagi order yetarli bo'lishi mumkin */
+      }
+      if (!order) {
+        pushToast("Buyurtma topilmadi", "error");
+        return;
+      }
+
+      const templates = await fetchPdfTemplatesFromApi().catch(() => [] as PdfTemplate[]);
+      const orderItems = (order.items ?? []) as OrderItem[];
+      const cartItems: ReceiptCartItem[] = orderItems
+        .map(item => {
+          const analysisId = resolveOrderItemAnalysisId(item);
+          if (!analysisId) return null;
+          return {
+            key: `${order.id}-${item.id}`,
+            analysis_id: analysisId,
+            analysis_name: item.analysis?.name ?? `Analiz #${analysisId}`,
+            laboratory_name: item.laboratory?.name ?? "—",
+            price: orderItemPrice(item),
+          };
+        })
+        .filter((item): item is ReceiptCartItem => item != null);
+
+      const items =
+        cartItems.length > 0
+          ? cartItems
+          : [
+              {
+                key: row.key,
+                analysis_id: row.analysisId,
+                analysis_name: row.analysisName,
+                laboratory_name: row.laboratoryName,
+                price: 0,
+              },
+            ];
+
+      const totalBeforeDiscount =
+        parseMoney(order.total_amount) || items.reduce((sum, i) => sum + i.price, 0);
+      const discountAmount = parseMoney(order.discount_amount);
+      const paidAmount =
+        parseMoney(order.final_amount) || Math.max(0, totalBeforeDiscount - discountAmount);
+      const discountPercent =
+        totalBeforeDiscount > 0 && discountAmount > 0
+          ? Math.round((discountAmount / totalBeforeDiscount) * 100)
+          : null;
+
+      const patient: ReceiptPatient = order.patient
+        ? {
+            first_name: order.patient.first_name,
+            last_name: order.patient.last_name,
+            phone: order.patient.phone ?? null,
+          }
+        : {
+            first_name: row.patientName,
+            last_name: "",
+            phone: null,
+          };
+
+      setReceiptView({
+        patient,
+        items,
+        paymentMethod: String(order.payment_method || ""),
+        paidAmount,
+        discountPercent,
+        totalBeforeDiscount,
+        resultLinks: buildReceiptQrLinks(order.id, items, templates),
+        initialAnalysisId: row.analysisId,
+      });
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "QR kod ochib bo'lmadi", "error");
+    } finally {
+      setQrLoadingKey(null);
+    }
   };
 
   const zoomIn = () =>
@@ -850,9 +969,24 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
                       {r.orderCreatedAt ? formatDate(r.orderCreatedAt) : "—"}
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <span className="text-[11px] font-semibold" style={{ color: primaryColor }}>
-                        PDF ochish
-                      </span>
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          type="button"
+                          title="QR kod"
+                          onClick={e => void openReceiptQr(e, r)}
+                          disabled={qrLoadingKey != null}
+                          className="inline-flex items-center justify-center p-1.5 rounded-lg border border-border text-foreground hover:bg-secondary transition-colors disabled:opacity-50"
+                        >
+                          {qrLoadingKey === r.key ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <QrCode className="w-3.5 h-3.5" />
+                          )}
+                        </button>
+                        <span className="text-[11px] font-semibold" style={{ color: primaryColor }}>
+                          PDF ochish
+                        </span>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -863,6 +997,21 @@ export function ResultsPage({ primaryColor }: { primaryColor: string }) {
       </div>
 
       <ToastStack toasts={toasts} setToasts={setToasts} />
+
+      {receiptView && (
+        <ReceiptModal
+          primaryColor={primaryColor}
+          patient={receiptView.patient}
+          items={receiptView.items}
+          paymentMethod={receiptView.paymentMethod}
+          paidAmount={receiptView.paidAmount}
+          discountPercent={receiptView.discountPercent}
+          totalBeforeDiscount={receiptView.totalBeforeDiscount}
+          resultLinks={receiptView.resultLinks}
+          initialAnalysisId={receiptView.initialAnalysisId}
+          onClose={() => setReceiptView(null)}
+        />
+      )}
     </main>
   );
 }

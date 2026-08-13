@@ -59,6 +59,11 @@ export function isShowResultRoute(
   return /^\/showresult(\/|$)/i.test(path);
 }
 
+/** PIN: /showresult/137/22/26 → "1372226" */
+export function buildShowResultPin(params: ShowResultParams): string {
+  return `${params.orderId}${params.analysisId}${params.storageId}`;
+}
+
 /** Relativ path: /showresult/{orderId}/{analysisId}/{storageId} */
 export function buildShowResultPath(params: ShowResultParams): string {
   const { orderId, analysisId, storageId } = params;

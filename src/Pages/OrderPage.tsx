@@ -1,9 +1,9 @@
-import * as React from "react";
-import { useEffect, useMemo, useState } from "react";
+﻿import * as React from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, ArrowRight, Loader2, AlertCircle, Plus, X, CheckCircle,
-  FlaskConical, MessageSquare, Search, UserPlus, Printer, ClipboardList, Pencil,
-  RefreshCw,
+  FlaskConical, MessageSquare, Search, UserPlus, ClipboardList, Pencil,
+  RefreshCw, QrCode,
 } from "lucide-react";
 import { getPatientById, getPatientsFull, type Patient } from "@/api/patient";
 import { getAllLaboratories, type Laboratory } from "@/api/laboratory";
@@ -13,6 +13,8 @@ import { getStoredUser } from "@/api/session";
 import { ApiError } from "@/api/client";
 import { formatDate } from "@/lib/formatDate";
 import { statusLabel } from "@/lib/orderStatus";
+import { fetchPdfTemplatesFromApi } from "@/lib/pdfTemplate";
+import { ReceiptModal, buildReceiptQrLinks, type ResultQrLink } from "@/components/ReceiptModal";
 
 type PatientFilterForm = {
   first_name: string;
@@ -114,6 +116,17 @@ type CartItem = {
   price: number;
   status: "pending";
 };
+
+function extractCreatedOrderId(raw: unknown): number | null {
+  if (!raw || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  const nested =
+    obj.data && typeof obj.data === "object"
+      ? (obj.data as Record<string, unknown>).id
+      : undefined;
+  const n = Number(obj.id ?? nested);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
 
 const PAYMENT_OPTIONS: { value: PaymentMethod; label: string }[] = [
   { value: "cash", label: "Naqd" },
@@ -314,7 +327,7 @@ function AnalysisPickModal({
                 <span className="font-semibold text-foreground">
                   {selectedAnalyses.length} ta
                 </span>
-                {" · "}
+                {" В· "}
                 Jami:{" "}
                 <span className="font-semibold text-foreground">
                   {formatPrice(selectedTotal)}
@@ -473,160 +486,6 @@ function PaymentModal({
   );
 }
 
-function ReceiptModal({
-  primaryColor,
-  patient,
-  items,
-  paymentMethod,
-  paidAmount,
-  discountPercent,
-  totalBeforeDiscount,
-  onClose,
-}: {
-  primaryColor: string;
-  patient: Patient;
-  items: CartItem[];
-  paymentMethod: PaymentMethod;
-  paidAmount: number;
-  discountPercent: number | null;
-  totalBeforeDiscount: number;
-  onClose: () => void;
-}) {
-  const receiptRef = React.useRef<HTMLDivElement>(null);
-  const discountAmount =
-    discountPercent != null && discountPercent > 0
-      ? Math.round((totalBeforeDiscount * discountPercent) / 100)
-      : 0;
-  const methodLabel =
-    PAYMENT_OPTIONS.find(o => o.value === paymentMethod)?.label ?? paymentMethod;
-  const now = new Date();
-  const checkNo = `CHK-${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
-
-  const handlePrint = () => {
-    window.print();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 print:p-0 print:static print:bg-white">
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-sm print:hidden" onClick={onClose} />
-      <div className="relative bg-card rounded-3xl border border-border shadow-2xl w-full max-w-md overflow-hidden print:shadow-none print:border-0 print:rounded-none print:max-w-none">
-        <div className="flex items-center justify-between px-6 py-5 border-b border-border print:hidden">
-          <div>
-            <h2 className="font-semibold text-foreground text-[15px]">To&apos;lov cheki</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">Chop etish uchun tayyor</p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-xl hover:bg-secondary transition-colors text-muted-foreground"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        <div ref={receiptRef} id="kassa-receipt-print" className="p-6">
-          <div className="text-center border-b border-dashed border-border pb-4 mb-4">
-            <p className="text-sm font-bold text-foreground tracking-wide">SES LABORATORIYA</p>
-            <p className="text-[11px] text-muted-foreground mt-1">To&apos;lov cheki</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">{checkNo}</p>
-            <p className="text-[11px] text-muted-foreground whitespace-pre-line">
-              {formatDate(now.toISOString())}
-            </p>
-          </div>
-
-          <div className="space-y-1.5 text-[12px] mb-4">
-            <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">Bemor</span>
-              <span className="font-medium text-foreground text-right">
-                {patient.last_name} {patient.first_name}
-              </span>
-            </div>
-            <div className="flex justify-between gap-3">
-              <span className="text-muted-foreground">Telefon</span>
-              <span className="text-foreground">{patient.phone || "—"}</span>
-            </div>
-          </div>
-
-          <div className="border-t border-b border-dashed border-border py-3 mb-4 space-y-2">
-            {items.map(item => (
-              <div key={item.key} className="flex justify-between gap-3 text-[12px]">
-                <div className="min-w-0">
-                  <p className="text-foreground font-medium truncate">{item.analysis_name}</p>
-                  <p className="text-[10px] text-muted-foreground truncate">{item.laboratory_name}</p>
-                </div>
-                <span className="shrink-0 text-foreground">{formatPrice(item.price)}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-1.5 text-[12px] mb-4">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Jami</span>
-              <span className="text-foreground">{formatPrice(totalBeforeDiscount)}</span>
-            </div>
-            {discountPercent != null && discountPercent > 0 && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Chegirma ({discountPercent}%)</span>
-                <span className="text-foreground">-{formatPrice(discountAmount)}</span>
-              </div>
-            )}
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">To&apos;lov turi</span>
-              <span className="text-foreground">{methodLabel}</span>
-            </div>
-            <div className="flex justify-between pt-2 border-t border-border">
-              <span className="font-semibold text-foreground">To&apos;langan</span>
-              <span className="font-bold text-foreground" style={{ color: primaryColor }}>
-                {formatPrice(paidAmount)}
-              </span>
-            </div>
-          </div>
-
-          <p className="text-center text-[11px] text-muted-foreground pt-2">
-            Rahmat! Sog&apos;ligingiz uchun!
-          </p>
-        </div>
-
-        <div className="px-6 py-4 border-t border-border flex gap-3 print:hidden">
-          <button
-            type="button"
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors"
-          >
-            Yopish
-          </button>
-          <button
-            type="button"
-            onClick={handlePrint}
-            className="flex-1 inline-flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
-            style={{ background: primaryColor }}
-          >
-            <Printer className="w-4 h-4" />
-            Chop etish
-          </button>
-        </div>
-      </div>
-
-      <style>{`
-        @media print {
-          @page { margin: 12mm; size: auto; }
-          body * { visibility: hidden !important; }
-          #kassa-receipt-print, #kassa-receipt-print * { visibility: visible !important; }
-          #kassa-receipt-print {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            padding: 0 !important;
-            background: white !important;
-            color: black !important;
-          }
-        }
-      `}</style>
-    </div>
-  );
-}
-
 export function OrderPage({
   primaryColor,
   patientId,
@@ -659,9 +518,12 @@ export function OrderPage({
   const [analysisModalOpen, setAnalysisModalOpen] = useState(false);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
+  const [receiptLoading, setReceiptLoading] = useState(false);
+  const [receiptLinks, setReceiptLinks] = useState<ResultQrLink[]>([]);
   const [paymentPaid, setPaymentPaid] = useState(false);
   const [paidAmount, setPaidAmount] = useState(0);
   const [submitting, setSubmitting] = useState(false);
+  const createdOrderIdRef = useRef<number | null>(null);
   const [toasts, setToasts] = useState<ToastMsg[]>([]);
   const [removeTargetKey, setRemoveTargetKey] = useState<string | null>(null);
 
@@ -680,8 +542,11 @@ export function OrderPage({
     setAnalysisModalOpen(false);
     setPaymentModalOpen(false);
     setReceiptOpen(false);
+    setReceiptLoading(false);
+    setReceiptLinks([]);
     setPaymentPaid(false);
     setPaidAmount(0);
+    createdOrderIdRef.current = null;
   };
 
   useEffect(() => {
@@ -860,19 +725,19 @@ export function OrderPage({
     setPaidAmount(amount);
     setPaymentPaid(true);
     setPaymentModalOpen(false);
-    setReceiptOpen(true);
     pushToast("To'lov qabul qilindi", "success");
   };
 
-  const handleSubmit = async () => {
-    if (!patient) return;
+  const persistOrder = async (): Promise<number | null> => {
+    if (createdOrderIdRef.current) return createdOrderIdRef.current;
+    if (!patient) return null;
     if (items.length === 0) {
       pushToast("Kamida bitta analiz qo'shing", "info");
-      return;
+      return null;
     }
     if (!paymentMethod) {
       pushToast("To'lov turini tanlang", "info");
-      return;
+      return null;
     }
 
     let discountValue: number | null = null;
@@ -881,7 +746,7 @@ export function OrderPage({
       const n = Number(discountRaw);
       if (!Number.isFinite(n) || n < 0 || n > 100) {
         pushToast("Chegirma 0 dan 100 gacha bo'lishi kerak", "info");
-        return;
+        return null;
       }
       discountValue = n;
     }
@@ -889,44 +754,75 @@ export function OrderPage({
     const user = getStoredUser();
     if (!user?.id) {
       pushToast("Foydalanuvchi sessiyasi topilmadi. Qayta kiring", "error");
-      return;
+      return null;
     }
 
-    setSubmitting(true);
-    try {
-      const created = await addOrder({
-        order_type: "patient",
-        payment_method: paymentMethod,
-        discount_percent: discountValue,
-        street: patient.street || null,
-        village: patient.village || null,
-        description: patient.description || null,
-        district_id: patient.district_id ?? patient.district?.id ?? null,
-        patient_id: patient.id,
-        owner_id: user.id,
-        items: items.map(i => ({
-          analysis_id: i.analysis_id,
-          laboratory_id: i.laboratory_id,
-          price: i.price,
-        })),
-      });
+    const created = await addOrder({
+      order_type: "patient",
+      payment_method: paymentMethod,
+      discount_percent: discountValue,
+      street: patient.street || null,
+      village: patient.village || null,
+      description: patient.description || null,
+      district_id: patient.district_id ?? patient.district?.id ?? null,
+      patient_id: patient.id,
+      owner_id: user.id,
+      items: items.map(i => ({
+        analysis_id: i.analysis_id,
+        laboratory_id: i.laboratory_id,
+        price: i.price,
+      })),
+    });
 
-      if (paymentPaid && created?.id) {
-        try {
-          await updatePaymentStatus(created.id, "paid");
-        } catch {
-          pushToast("Order yaratildi, lekin to'lov holatini yangilab bo'lmadi", "info");
-        }
+    const id = extractCreatedOrderId(created);
+    if (id == null) {
+      pushToast("Order yaratildi, lekin ID qaytmadi", "error");
+      return null;
+    }
 
-        if (sendSms) {
-          try {
-            await updateOrder(created.id, { payment_sms: true });
-          } catch {
-            pushToast("Order yaratildi, lekin to'lov SMS yuborib bo'lmadi", "info");
-          }
-        }
+    createdOrderIdRef.current = id;
+
+    if (paymentPaid) {
+      try {
+        await updatePaymentStatus(id, "paid");
+      } catch {
+        pushToast("Order yaratildi, lekin to'lov holatini yangilab bo'lmadi", "info");
       }
 
+      if (sendSms) {
+        try {
+          await updateOrder(id, { payment_sms: true });
+        } catch {
+          pushToast("Order yaratildi, lekin to'lov SMS yuborib bo'lmadi", "info");
+        }
+      }
+    }
+
+    return id;
+  };
+
+  const openReceipt = async () => {
+    if (receiptLoading) return;
+    setReceiptLoading(true);
+    try {
+      const orderId = await persistOrder();
+      if (orderId == null) return;
+
+      const templates = await fetchPdfTemplatesFromApi().catch(() => []);
+      setReceiptLinks(buildReceiptQrLinks(orderId, items, templates));
+      setReceiptOpen(true);
+    } catch (err) {
+      pushToast(err instanceof ApiError ? err.message : "Chek ochib bo'lmadi", "error");
+    } finally {
+      setReceiptLoading(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    try {
+      const created = await persistOrder();
+      if (created == null) return;
       pushToast(
         paymentPaid && sendSms
           ? "Order yaratildi. To'lov SMS yuborildi"
@@ -1438,14 +1334,6 @@ export function OrderPage({
                             <p className="text-[11px] text-muted-foreground">
                               {formatPrice(paidAmount)}
                             </p>
-                            <button
-                              type="button"
-                              onClick={() => setReceiptOpen(true)}
-                              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[12px] font-semibold border border-border text-foreground hover:bg-secondary transition-colors"
-                            >
-                              <Printer className="w-3.5 h-3.5" />
-                              Chek
-                            </button>
                           </>
                         ) : (
                           <button
@@ -1518,10 +1406,25 @@ export function OrderPage({
             >
               Bekor qilish
             </button>
+            {paymentPaid && (
+              <button
+                type="button"
+                onClick={() => void openReceipt()}
+                disabled={receiptLoading || submitting || items.length === 0}
+                className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium border border-border text-foreground hover:bg-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {receiptLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <QrCode className="w-4 h-4" />
+                )}
+                Chek
+              </button>
+            )}
             <button
               type="button"
               onClick={() => void handleSubmit()}
-              disabled={submitting || items.length === 0 || !paymentMethod}
+              disabled={submitting || receiptLoading || items.length === 0 || !paymentMethod}
               className="inline-flex items-center gap-2 px-6 py-3 rounded-xl text-sm font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: primaryColor }}
             >
@@ -1530,7 +1433,7 @@ export function OrderPage({
               ) : (
                 <CheckCircle className="w-4 h-4" />
               )}
-              Order yaratish
+              Buyurtma yaratish
             </button>
           </div>
         </>
@@ -1566,6 +1469,7 @@ export function OrderPage({
           paidAmount={paidAmount}
           discountPercent={parsedDiscount}
           totalBeforeDiscount={totalPrice}
+          resultLinks={receiptLinks}
           onClose={() => setReceiptOpen(false)}
         />
       )}
